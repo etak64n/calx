@@ -16,6 +16,16 @@ fn main() {
         return;
     }
 
+    // Import validates input before requesting calendar access
+    if let Commands::Import { ref file } = cli.command {
+        let result = commands::import_cmd::run(file, cli.output);
+        if let Err(e) = result {
+            print_error(&cli, &e);
+            std::process::exit(1);
+        }
+        return;
+    }
+
     let store = match store::CalendarStore::new() {
         Ok(s) => s,
         Err(e) => {
@@ -137,7 +147,7 @@ fn main() {
             no_color,
             no_header,
         ),
-        Commands::Import { ref file } => commands::import_cmd::run(&store, file, cli.output),
+        Commands::Import { .. } => unreachable!(),
         Commands::Completions { .. } => unreachable!(),
     };
 

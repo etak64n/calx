@@ -1,8 +1,9 @@
 use crate::cli::OutputFormat;
+use crate::dateparse;
 use crate::error::AppError;
 use crate::output::print_output;
 use crate::store::{CalendarStore, EventInfo};
-use chrono::{Duration, Local, NaiveDate};
+use chrono::{Duration, Local};
 use unicode_width::UnicodeWidthStr;
 
 const TIME_W: usize = 15;
@@ -21,15 +22,11 @@ pub fn run(
 ) -> Result<(), AppError> {
     let today = Local::now().date_naive();
     let from_date = match from {
-        Some(s) => {
-            NaiveDate::parse_from_str(&s, "%Y-%m-%d").map_err(|_| AppError::InvalidDate(s))?
-        }
+        Some(s) => dateparse::parse_date(&s).ok_or(AppError::InvalidDate(s))?,
         None => today,
     };
     let to_date = match to {
-        Some(s) => {
-            NaiveDate::parse_from_str(&s, "%Y-%m-%d").map_err(|_| AppError::InvalidDate(s))?
-        }
+        Some(s) => dateparse::parse_date(&s).ok_or(AppError::InvalidDate(s))?,
         None => from_date + Duration::days(7),
     };
 
@@ -60,16 +57,8 @@ pub fn print_events(
     if fields.is_some() && !matches!(format, OutputFormat::Human) {
         let field_list: Vec<&str> = fields.unwrap().split(',').map(|s| s.trim()).collect();
         let filtered = filter_fields(&events, &field_list);
-        match format {
-            OutputFormat::Human => {}
-            _ => {
-                println!(
-                    "{}",
-                    serde_json::to_string_pretty(&filtered).unwrap_or_default()
-                );
-                return;
-            }
-        }
+        print_output(format, &filtered, |_| {});
+        return;
     }
 
     print_output(format, &events, |evts| {

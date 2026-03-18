@@ -11,7 +11,9 @@ struct ImportResult {
     imported: usize,
 }
 
-pub fn run(store: &CalendarStore, file: &str, format: OutputFormat) -> Result<(), AppError> {
+/// Validates input first, then creates store only if needed.
+pub fn run(file: &str, format: OutputFormat) -> Result<(), AppError> {
+    // 1. Read content (validates file existence / stdin)
     let content = if file == "-" {
         let mut buf = String::new();
         std::io::stdin()
@@ -23,20 +25,26 @@ pub fn run(store: &CalendarStore, file: &str, format: OutputFormat) -> Result<()
             .map_err(|e| AppError::EventKit(format!("Failed to read file: {e}")))?
     };
 
+    // 2. Determine format (validates extension)
     let is_ics = if file == "-" {
         content.trim_start().starts_with("BEGIN:VCALENDAR")
-    } else {
-        file.ends_with(".ics")
-    };
-
-    let count = if is_ics {
-        import_ics(store, &content)?
-    } else if file == "-" || file.ends_with(".csv") {
-        import_csv(store, &content)?
+    } else if file.ends_with(".ics") {
+        true
+    } else if file.ends_with(".csv") {
+        false
     } else {
         return Err(AppError::EventKit(
             "Unknown file format. Use .ics or .csv, or pipe via stdin.".to_string(),
         ));
+    };
+
+    // 3. Now request calendar access
+    let store = CalendarStore::new()?;
+
+    let count = if is_ics {
+        import_ics(&store, &content)?
+    } else {
+        import_csv(&store, &content)?
     };
 
     let result = ImportResult { imported: count };
@@ -52,6 +60,7 @@ fn import_ics(store: &CalendarStore, content: &str) -> Result<usize, AppError> {
     let mut start = String::new();
     let mut end = String::new();
     let mut notes = String::new();
+    let mut is_all_day = false;
     let mut in_event = false;
 
     for line in content.lines() {
@@ -63,6 +72,7 @@ fn import_ics(store: &CalendarStore, content: &str) -> Result<usize, AppError> {
                 start.clear();
                 end.clear();
                 notes.clear();
+                is_all_day = false;
             }
             "END:VEVENT" if in_event => {
                 in_event = false;
@@ -84,7 +94,7 @@ fn import_ics(store: &CalendarStore, content: &str) -> Result<usize, AppError> {
                         None,
                         None,
                         notes_opt.as_deref(),
-                        false,
+                        is_all_day,
                     )?;
                     count += 1;
                 }
@@ -92,22 +102,35 @@ fn import_ics(store: &CalendarStore, content: &str) -> Result<usize, AppError> {
             _ if in_event => {
                 if let Some(v) = line.strip_prefix("SUMMARY:") {
                     title = v.to_string();
-                } else if let Some(v) = line.strip_prefix("DTSTART:") {
-                    start = v.to_string();
-                } else if let Some(v) = line.strip_prefix("DTSTART;VALUE=DATE:") {
-                    start = v.to_string();
-                } else if let Some(v) = line.strip_prefix("DTEND:") {
-                    end = v.to_string();
-                } else if let Some(v) = line.strip_prefix("DTEND;VALUE=DATE:") {
-                    end = v.to_string();
                 } else if let Some(v) = line.strip_prefix("DESCRIPTION:") {
                     notes = v.to_string();
+                } else if line.starts_with("DTSTART") {
+                    let (val, all_day) = parse_ics_dt_line(line);
+                    start = val;
+                    if all_day {
+                        is_all_day = true;
+                    }
+                } else if line.starts_with("DTEND") {
+                    let (val, _) = parse_ics_dt_line(line);
+                    end = val;
                 }
             }
             _ => {}
         }
     }
     Ok(count)
+}
+
+/// Parse a DTSTART or DTEND line, handling various ICS formats:
+/// DTSTART:20260320T140000
+/// DTSTART:20260320T140000Z
+/// DTSTART;VALUE=DATE:20260320
+/// DTSTART;TZID=Asia/Tokyo:20260320T140000
+fn parse_ics_dt_line(line: &str) -> (String, bool) {
+    let is_all_day = line.contains("VALUE=DATE");
+    // Extract the value after the last ':'
+    let val = line.rsplit(':').next().unwrap_or("").to_string();
+    (val, is_all_day)
 }
 
 fn import_csv(store: &CalendarStore, content: &str) -> Result<usize, AppError> {
@@ -133,6 +156,7 @@ fn import_csv(store: &CalendarStore, content: &str) -> Result<usize, AppError> {
 }
 
 pub(crate) fn parse_ics_datetime(s: &str) -> Option<NaiveDateTime> {
+    let s = s.trim_end_matches('Z'); // Handle UTC suffix
     NaiveDateTime::parse_from_str(s, "%Y%m%dT%H%M%S")
         .or_else(|_| {
             chrono::NaiveDate::parse_from_str(s, "%Y%m%d").map(|d| d.and_hms_opt(0, 0, 0).unwrap())
@@ -157,14 +181,18 @@ mod tests {
     use super::*;
     use chrono::{Datelike, Timelike};
 
-    // --- ICS datetime parsing ---
-
     #[test]
     fn test_ics_datetime_full() {
         let dt = parse_ics_datetime("20260320T140000").unwrap();
         assert_eq!(dt.year(), 2026);
         assert_eq!(dt.month(), 3);
         assert_eq!(dt.day(), 20);
+        assert_eq!(dt.hour(), 14);
+    }
+
+    #[test]
+    fn test_ics_datetime_with_z() {
+        let dt = parse_ics_datetime("20260320T140000Z").unwrap();
         assert_eq!(dt.hour(), 14);
     }
 
@@ -181,7 +209,33 @@ mod tests {
         assert!(parse_ics_datetime("").is_none());
     }
 
-    // --- CSV datetime parsing ---
+    #[test]
+    fn test_ics_dt_line_basic() {
+        let (val, all_day) = parse_ics_dt_line("DTSTART:20260320T140000");
+        assert_eq!(val, "20260320T140000");
+        assert!(!all_day);
+    }
+
+    #[test]
+    fn test_ics_dt_line_utc() {
+        let (val, all_day) = parse_ics_dt_line("DTSTART:20260320T140000Z");
+        assert_eq!(val, "20260320T140000Z");
+        assert!(!all_day);
+    }
+
+    #[test]
+    fn test_ics_dt_line_value_date() {
+        let (val, all_day) = parse_ics_dt_line("DTSTART;VALUE=DATE:20260320");
+        assert_eq!(val, "20260320");
+        assert!(all_day);
+    }
+
+    #[test]
+    fn test_ics_dt_line_tzid() {
+        let (val, all_day) = parse_ics_dt_line("DTSTART;TZID=Asia/Tokyo:20260320T140000");
+        assert_eq!(val, "20260320T140000");
+        assert!(!all_day);
+    }
 
     #[test]
     fn test_csv_datetime_rfc3339() {
