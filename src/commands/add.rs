@@ -3,12 +3,6 @@ use crate::dateparse;
 use crate::error::AppError;
 use crate::output::print_output;
 use crate::store::CalendarStore;
-use serde::Serialize;
-
-#[derive(Serialize)]
-struct AddResult {
-    event_id: String,
-}
 
 #[allow(clippy::too_many_arguments)]
 pub fn run(
@@ -44,9 +38,10 @@ pub fn run(
         repeat_interval,
     )?;
 
-    let result = AddResult { event_id };
-    print_output(format, &result, |r| {
-        println!("Event created: {}", r.event_id);
+    // Return the created event so AI agents can verify the result
+    let event = store.get_event(&event_id)?;
+    print_output(format, &event, |ev| {
+        println!("Event created: {}", ev.id);
     });
     Ok(())
 }

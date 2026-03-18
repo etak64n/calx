@@ -195,6 +195,9 @@ pub enum Commands {
     Delete {
         /// Event identifier
         event_id: String,
+        /// Show what would be deleted without actually deleting
+        #[arg(long)]
+        dry_run: bool,
     },
 
     /// Display full details of an event

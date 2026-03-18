@@ -1,20 +1,63 @@
 use crate::cli::OutputFormat;
 use crate::error::AppError;
+use crate::output::print_output;
 use crate::store::CalendarStore;
+use std::io::IsTerminal;
 
-use super::events::DisplayOpts;
-
-pub fn run(
-    store: &CalendarStore,
-    event_id: &str,
-    format: OutputFormat,
-    opts: &DisplayOpts,
-) -> Result<(), AppError> {
+pub fn run(store: &CalendarStore, event_id: &str, format: OutputFormat) -> Result<(), AppError> {
     let event = store.get_event(event_id)?;
-    let show_opts = DisplayOpts {
-        verbose: true,
-        ..*opts
-    };
-    super::events::print_events(vec![event], format, &show_opts);
+    print_output(format, &event, |ev| {
+        let (bold, dim, reset) = if std::io::stdout().is_terminal() {
+            ("\x1b[1m", "\x1b[2m", "\x1b[0m")
+        } else {
+            ("", "", "")
+        };
+
+        let label_w = 14;
+        let print_field = |label: &str, value: &str| {
+            println!("{dim}{label:<label_w$}{reset}{bold}{value}{reset}");
+        };
+
+        print_field("Title:", &ev.title);
+        print_field("Calendar:", &ev.calendar);
+        if ev.all_day {
+            print_field(
+                "Date:",
+                &format!("{} (All Day)", ev.start.format("%Y-%m-%d")),
+            );
+        } else {
+            print_field("Start:", &ev.start.format("%Y-%m-%d %H:%M").to_string());
+            print_field("End:", &ev.end.format("%Y-%m-%d %H:%M").to_string());
+        }
+        if let Some(loc) = &ev.location {
+            if !loc.is_empty() {
+                print_field("Location:", loc);
+            }
+        }
+        if let Some(url) = &ev.url {
+            if !url.is_empty() {
+                print_field("URL:", url);
+            }
+        }
+        print_field("Status:", &ev.status);
+        print_field("Availability:", &ev.availability);
+        if let Some(org) = &ev.organizer {
+            if !org.is_empty() {
+                print_field("Organizer:", org);
+            }
+        }
+        if let Some(notes) = &ev.notes {
+            if !notes.is_empty() {
+                print_field("Notes:", notes);
+            }
+        }
+        if let Some(c) = &ev.created {
+            print_field("Created:", &c.format("%Y-%m-%d %H:%M").to_string());
+        }
+        if let Some(m) = &ev.modified {
+            print_field("Modified:", &m.format("%Y-%m-%d %H:%M").to_string());
+        }
+        print_field("ID:", &ev.id);
+    });
     Ok(())
 }

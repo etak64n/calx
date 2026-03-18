@@ -11,7 +11,7 @@ pub fn print_output<T: Serialize>(format: OutputFormat, data: &T, human_fn: impl
             println!("{}", serde_json::to_string_pretty(data).unwrap());
         }
         OutputFormat::Yaml => {
-            print!("{}", serde_yaml::to_string(data).unwrap());
+            print!("{}", serde_yml::to_string(data).unwrap());
         }
         OutputFormat::Csv => print_delimited(data, b','),
         OutputFormat::Tsv => print_delimited(data, b'\t'),

@@ -21,7 +21,7 @@ fn main() {
         Ok(s) => s,
         Err(e) => {
             print_error(&cli, &e);
-            std::process::exit(1);
+            std::process::exit(e.exit_code());
         }
     };
 
@@ -145,10 +145,11 @@ fn main() {
             all_day,
             cli.output,
         ),
-        Commands::Delete { ref event_id } => commands::delete::run(&store, event_id, cli.output),
-        Commands::Show { ref event_id } => {
-            commands::show::run(&store, event_id, cli.output, &base_opts)
-        }
+        Commands::Delete {
+            ref event_id,
+            dry_run,
+        } => commands::delete::run(&store, event_id, dry_run, cli.output),
+        Commands::Show { ref event_id } => commands::show::run(&store, event_id, cli.output),
         Commands::Search {
             ref query,
             ref from,
@@ -175,7 +176,7 @@ fn main() {
 
     if let Err(e) = result {
         print_error(&cli, &e);
-        std::process::exit(1);
+        std::process::exit(e.exit_code());
     }
 }
 
