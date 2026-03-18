@@ -65,6 +65,8 @@ pub enum Commands {
     Calendars,
 
     /// Human-friendly daily overview with time-relative info
+    ///
+    /// Only --calendar, -o, and --no-color are used. Other global flags are ignored.
     Agenda {
         /// Filter by calendar name
         #[arg(long)]
