@@ -1,0 +1,42 @@
+[package]
+name = "calx"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.85"
+description = "Native macOS Calendar CLI built on EventKit"
+license = "MIT"
+repository = "https://github.com/etak64n/calx"
+authors = ["etak64n"]
+keywords = ["macos", "calendar", "eventkit", "cli"]
+categories = ["command-line-utilities"]
+
+[[bin]]
+name = "calx"
+path = "src/main.rs"
+
+[dependencies]
+block2 = "0.6"
+chrono = { version = "0.4", features = ["serde"] }
+clap = { version = "4", features = ["derive"] }
+clap_complete = "4"
+objc2 = "0.6"
+objc2-event-kit = { version = "0.3", features = [
+    "EKCalendar",
+    "EKCalendarItem",
+    "EKEvent",
+    "EKEventStore",
+    "EKObject",
+    "EKSource",
+    "EKTypes",
+] }
+objc2-foundation = { version = "0.3", features = [
+    "NSDate",
+    "NSString",
+    "NSArray",
+    "NSPredicate",
+    "NSError",
+    "NSEnumerator",
+] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+thiserror = "2"

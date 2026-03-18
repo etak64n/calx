@@ -1,0 +1,45 @@
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: x86_64-apple-darwin, aarch64-apple-darwin
+
+      - name: Build arm64
+        run: cargo build --release --target aarch64-apple-darwin
+
+      - name: Build x86_64
+        run: cargo build --release --target x86_64-apple-darwin
+
+      - name: Create universal binary
+        run: |
+          lipo -create \
+            target/aarch64-apple-darwin/release/calx \
+            target/x86_64-apple-darwin/release/calx \
+            -output calx
+          chmod +x calx
+
+      - name: Package
+        run: |
+          tar czf calx-${{ github.ref_name }}-macos-universal.tar.gz calx
+          shasum -a 256 calx-${{ github.ref_name }}-macos-universal.tar.gz > sha256.txt
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            calx-${{ github.ref_name }}-macos-universal.tar.gz
+            sha256.txt
+          generate_release_notes: true
