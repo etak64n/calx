@@ -14,6 +14,8 @@ pub fn run(
     to: Option<String>,
     calendar: Option<String>,
     format: OutputFormat,
+    verbose: bool,
+    fields: Option<&str>,
 ) -> Result<(), AppError> {
     let today = Local::now().date_naive();
     let from_date = match from {
@@ -30,7 +32,7 @@ pub fn run(
     };
 
     let events = store.events(from_date, to_date, calendar.as_deref())?;
-    print_events(events, format);
+    print_events(events, format, verbose, fields);
     Ok(())
 }
 
@@ -43,7 +45,29 @@ fn pad_right(s: &str, width: usize) -> String {
     }
 }
 
-pub fn print_events(events: Vec<EventInfo>, format: OutputFormat) {
+pub fn print_events(
+    events: Vec<EventInfo>,
+    format: OutputFormat,
+    verbose: bool,
+    fields: Option<&str>,
+) {
+    // For structured formats, filter fields if specified
+    if fields.is_some() && !matches!(format, OutputFormat::Human) {
+        let field_list: Vec<&str> = fields.unwrap().split(',').map(|s| s.trim()).collect();
+        let filtered = filter_fields(&events, &field_list);
+        match format {
+            OutputFormat::Human => {}
+            _ => {
+                // Re-serialize filtered data
+                println!(
+                    "{}",
+                    serde_json::to_string_pretty(&filtered).unwrap_or_default()
+                );
+                return;
+            }
+        }
+    }
+
     print_output(format, &events, |evts| {
         let tty = std::io::stdout().is_terminal();
 
@@ -136,16 +160,48 @@ pub fn print_events(events: Vec<EventInfo>, format: OutputFormat) {
                 }
             }
 
+            // Notes: always show in verbose, first line only otherwise
             if let Some(notes) = &ev.notes {
-                let first_line = notes.lines().next().unwrap_or("");
-                if !first_line.is_empty() {
-                    println!("{notes_indent}{dim}{first_line}{reset}");
+                if verbose {
+                    for line in notes.lines() {
+                        println!("{notes_indent}{dim}{line}{reset}");
+                    }
+                } else {
+                    let first_line = notes.lines().next().unwrap_or("");
+                    if !first_line.is_empty() {
+                        println!("{notes_indent}{dim}{first_line}{reset}");
+                    }
                 }
+            }
+
+            // Verbose: show ID
+            if verbose {
+                println!("{notes_indent}{dim}ID: {}{reset}", ev.id);
             }
 
             row += 1;
         }
     });
+}
+
+fn filter_fields(
+    events: &[EventInfo],
+    fields: &[&str],
+) -> Vec<serde_json::Map<String, serde_json::Value>> {
+    events
+        .iter()
+        .filter_map(|ev| {
+            let val = serde_json::to_value(ev).ok()?;
+            let obj = val.as_object()?;
+            let mut filtered = serde_json::Map::new();
+            for &f in fields {
+                if let Some(v) = obj.get(f) {
+                    filtered.insert(f.to_string(), v.clone());
+                }
+            }
+            Some(filtered)
+        })
+        .collect()
 }
 
 fn format_duration(d: chrono::Duration) -> String {

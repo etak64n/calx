@@ -24,6 +24,9 @@ fn main() {
         }
     };
 
+    let verbose = cli.verbose;
+    let fields = cli.fields.as_deref();
+
     let result = match cli.command {
         Commands::Calendars => commands::calendars::run(&store, cli.output),
         Commands::Events {
@@ -36,12 +39,14 @@ fn main() {
             to.clone(),
             calendar.clone(),
             cli.output,
+            verbose,
+            fields,
         ),
         Commands::Today { ref calendar } => {
-            commands::today::run(&store, calendar.clone(), cli.output)
+            commands::today::run(&store, calendar.clone(), cli.output, verbose, fields)
         }
         Commands::Upcoming { days, ref calendar } => {
-            commands::upcoming::run(&store, days, calendar.clone(), cli.output)
+            commands::upcoming::run(&store, days, calendar.clone(), cli.output, verbose, fields)
         }
         Commands::Add {
             ref title,
@@ -85,7 +90,15 @@ fn main() {
             ref query,
             ref from,
             ref to,
-        } => commands::search::run(&store, query, from.clone(), to.clone(), cli.output),
+        } => commands::search::run(
+            &store,
+            query,
+            from.clone(),
+            to.clone(),
+            cli.output,
+            verbose,
+            fields,
+        ),
         Commands::Next { ref calendar } => {
             commands::next::run(&store, calendar.clone(), cli.output)
         }

@@ -32,9 +32,17 @@ pub struct Cli {
     #[command(subcommand)]
     pub command: Commands,
 
-    /// Output format (human-readable or JSON)
+    /// Output format
     #[arg(long, short, global = true, default_value = "human")]
     pub output: OutputFormat,
+
+    /// Show all fields (id, notes, etc.)
+    #[arg(long, short, global = true)]
+    pub verbose: bool,
+
+    /// Comma-separated list of fields to display (e.g. title,start,end,calendar)
+    #[arg(long, global = true)]
+    pub fields: Option<String>,
 }
 
 #[derive(Subcommand)]

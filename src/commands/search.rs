@@ -10,6 +10,8 @@ pub fn run(
     from: Option<String>,
     to: Option<String>,
     format: OutputFormat,
+    verbose: bool,
+    fields: Option<&str>,
 ) -> Result<(), AppError> {
     let today = Local::now().date_naive();
     let from_date = from
@@ -20,6 +22,6 @@ pub fn run(
         .unwrap_or(from_date + Duration::days(90));
 
     let events = store.search_events(query, from_date, to_date)?;
-    super::events::print_events(events, format);
+    super::events::print_events(events, format, verbose, fields);
     Ok(())
 }
