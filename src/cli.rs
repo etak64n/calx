@@ -11,28 +11,38 @@ pub enum OutputFormat {
 #[command(
     name = "calx",
     version,
-    about = "Native macOS Calendar CLI built on EventKit"
+    about = "Native macOS Calendar CLI built on EventKit",
+    long_about = "Native macOS Calendar CLI built on EventKit.\n\n\
+        Manage Apple Calendar events directly from the terminal.\n\
+        Supports natural language dates, JSON output, ICS/CSV export, and more.",
+    after_help = "Examples:\n  \
+        calx today                                         Show today's events\n  \
+        calx add --title \"Meeting\" --start \"tomorrow 3pm\" --end \"tomorrow 4pm\"\n  \
+        calx add --title \"Lunch\" --start \"next friday 12pm\" --end \"next friday 1pm\"\n  \
+        calx search \"lunch\" --from 2026-03-01\n  \
+        calx events --from 2026-03-18 --to 2026-03-25 -o json\n  \
+        calx export --format ics > events.ics"
 )]
 pub struct Cli {
     #[command(subcommand)]
     pub command: Commands,
 
-    /// Output format
+    /// Output format (human-readable or JSON)
     #[arg(long, short, global = true, default_value = "human")]
     pub output: OutputFormat,
 }
 
 #[derive(Subcommand)]
 pub enum Commands {
-    /// List all calendars
+    /// List all calendars with their sources
     Calendars,
 
-    /// List events in a date range
+    /// Query events within a date range
     Events {
-        /// Start date (YYYY-MM-DD). Defaults to today
+        /// Start date (YYYY-MM-DD or natural language). Defaults to today
         #[arg(long)]
         from: Option<String>,
-        /// End date (YYYY-MM-DD). Defaults to 7 days from start
+        /// End date (YYYY-MM-DD or natural language). Defaults to 7 days from start
         #[arg(long)]
         to: Option<String>,
         /// Filter by calendar name
@@ -40,14 +50,14 @@ pub enum Commands {
         calendar: Option<String>,
     },
 
-    /// Show today's events
+    /// Show today's schedule
     Today {
         /// Filter by calendar name
         #[arg(long)]
         calendar: Option<String>,
     },
 
-    /// Show upcoming events
+    /// Show upcoming events for the next N days
     Upcoming {
         /// Number of days to look ahead
         #[arg(long, default_value = "7")]
@@ -57,92 +67,92 @@ pub enum Commands {
         calendar: Option<String>,
     },
 
-    /// Add a new event
+    /// Create a new event (supports natural language dates)
     Add {
         /// Event title
         #[arg(long)]
         title: String,
-        /// Start (YYYY-MM-DD HH:MM or YYYY-MM-DD for all-day)
+        /// Start date/time: YYYY-MM-DD HH:MM, "tomorrow 3pm", "来週月曜の10時"
         #[arg(long)]
         start: String,
-        /// End (YYYY-MM-DD HH:MM or YYYY-MM-DD for all-day)
+        /// End date/time: YYYY-MM-DD HH:MM, "tomorrow 4pm", "来週月曜の11時"
         #[arg(long)]
         end: String,
-        /// Calendar name (uses default if omitted)
+        /// Target calendar (uses default if omitted)
         #[arg(long)]
         calendar: Option<String>,
-        /// Notes
+        /// Event notes
         #[arg(long)]
         notes: Option<String>,
-        /// All-day event
+        /// Mark as all-day event
         #[arg(long, default_value_t = false)]
         all_day: bool,
     },
 
-    /// Update an existing event
+    /// Modify an existing event
     Update {
-        /// Event identifier
+        /// Event identifier (from 'show' or 'events -o json')
         event_id: String,
         /// New title
         #[arg(long)]
         title: Option<String>,
-        /// New start (YYYY-MM-DD HH:MM or natural language)
+        /// New start date/time (supports natural language)
         #[arg(long)]
         start: Option<String>,
-        /// New end (YYYY-MM-DD HH:MM or natural language)
+        /// New end date/time (supports natural language)
         #[arg(long)]
         end: Option<String>,
         /// New notes
         #[arg(long)]
         notes: Option<String>,
-        /// Move to calendar
+        /// Move to a different calendar
         #[arg(long)]
         calendar: Option<String>,
-        /// Set all-day
+        /// Set as all-day event
         #[arg(long)]
         all_day: Option<bool>,
     },
 
-    /// Delete an event by ID
+    /// Remove an event
     Delete {
         /// Event identifier
         event_id: String,
     },
 
-    /// Show event details
+    /// Display full details of an event
     Show {
         /// Event identifier
         event_id: String,
     },
 
-    /// Search events by keyword
+    /// Find events by keyword (searches title and notes)
     Search {
-        /// Search query
+        /// Search keyword
         query: String,
-        /// Start date (YYYY-MM-DD). Defaults to today
+        /// Start of search range (default: today)
         #[arg(long)]
         from: Option<String>,
-        /// End date (YYYY-MM-DD). Defaults to 90 days from start
+        /// End of search range (default: 90 days ahead)
         #[arg(long)]
         to: Option<String>,
     },
 
-    /// Watch next upcoming event
+    /// Live-display the next upcoming event with countdown
     Watch {
         /// Filter by calendar name
         #[arg(long)]
         calendar: Option<String>,
     },
 
-    /// Export events to ICS or CSV
+    /// Export events to ICS or CSV format (writes to stdout)
     Export {
-        /// Export format: ics, csv
+        /// Output format: ics, csv
         #[arg(long, default_value = "ics")]
         format: String,
-        /// Start date (YYYY-MM-DD). Defaults to today
+        /// Start date (default: today)
         #[arg(long)]
         from: Option<String>,
-        /// End date (YYYY-MM-DD). Defaults to 30 days from start
+        /// End date (default: 30 days ahead)
         #[arg(long)]
         to: Option<String>,
         /// Filter by calendar name
@@ -150,18 +160,18 @@ pub enum Commands {
         calendar: Option<String>,
     },
 
-    /// Import events from ICS or CSV file
+    /// Import events from an ICS or CSV file
     Import {
-        /// File path
+        /// Path to .ics or .csv file
         file: String,
     },
 
-    /// Add event interactively
+    /// Create an event with guided prompts
     Interactive,
 
-    /// Generate shell completions
+    /// Generate shell completion script
     Completions {
-        /// Shell type
+        /// Target shell: bash, zsh, fish
         shell: Shell,
     },
 }
