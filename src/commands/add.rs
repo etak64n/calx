@@ -17,6 +17,8 @@ pub fn run(
     start: &str,
     end: &str,
     calendar: Option<&str>,
+    location: Option<&str>,
+    url: Option<&str>,
     notes: Option<&str>,
     all_day: bool,
     format: OutputFormat,
@@ -25,7 +27,9 @@ pub fn run(
         dateparse::parse_datetime(start).ok_or_else(|| AppError::InvalidDate(start.to_string()))?;
     let end_dt =
         dateparse::parse_datetime(end).ok_or_else(|| AppError::InvalidDate(end.to_string()))?;
-    let event_id = store.add_event(title, start_dt, end_dt, calendar, notes, all_day)?;
+    let event_id = store.add_event(
+        title, start_dt, end_dt, calendar, location, url, notes, all_day,
+    )?;
 
     let result = AddResult { event_id };
     print_output(format, &result, |r| {

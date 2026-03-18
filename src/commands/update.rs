@@ -17,6 +17,8 @@ pub fn run(
     title: Option<&str>,
     start: Option<&str>,
     end: Option<&str>,
+    location: Option<&str>,
+    url: Option<&str>,
     notes: Option<&str>,
     calendar: Option<&str>,
     all_day: Option<bool>,
@@ -29,7 +31,9 @@ pub fn run(
         .map(|s| dateparse::parse_datetime(s).ok_or_else(|| AppError::InvalidDate(s.to_string())))
         .transpose()?;
 
-    store.update_event(event_id, title, start_dt, end_dt, notes, calendar, all_day)?;
+    store.update_event(
+        event_id, title, start_dt, end_dt, location, url, notes, calendar, all_day,
+    )?;
 
     let result = UpdateResult { updated: true };
     print_output(format, &result, |_| {

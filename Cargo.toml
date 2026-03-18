@@ -1,6 +1,6 @@
 [package]
 name = "calx"
-version = "0.1.0"
+version = "0.3.0"
 edition = "2024"
 rust-version = "1.85"
 description = "Native macOS Calendar CLI built on EventKit"
@@ -36,6 +36,7 @@ objc2-foundation = { version = "0.3", features = [
     "NSPredicate",
     "NSError",
     "NSEnumerator",
+    "NSURL",
 ] }
 csv = "1"
 dialoguer = "0.11"

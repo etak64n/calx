@@ -183,12 +183,15 @@ impl CalendarStore {
         Ok(result)
     }
 
+    #[allow(clippy::too_many_arguments)]
     pub fn add_event(
         &self,
         title: &str,
         start: NaiveDateTime,
         end: NaiveDateTime,
         calendar_name: Option<&str>,
+        location: Option<&str>,
+        url: Option<&str>,
         notes: Option<&str>,
         all_day: bool,
     ) -> Result<String, AppError> {
@@ -216,6 +219,18 @@ impl CalendarStore {
             event.setEndDate(Some(&end_date));
             event.setAllDay(all_day);
         };
+
+        if let Some(loc) = location {
+            let ns = NSString::from_str(loc);
+            unsafe { event.setLocation(Some(&ns)) };
+        }
+
+        if let Some(u) = url {
+            let ns_url = NSURL::URLWithString(&NSString::from_str(u));
+            if let Some(ns_url) = ns_url {
+                unsafe { event.setURL(Some(&ns_url)) };
+            }
+        }
 
         if let Some(text) = notes {
             let ns_notes = NSString::from_str(text);
@@ -316,6 +331,13 @@ impl CalendarStore {
             .into_iter()
             .filter(|e| {
                 e.title.to_lowercase().contains(&query_lower)
+                    || e.calendar.to_lowercase().contains(&query_lower)
+                    || e.location
+                        .as_ref()
+                        .is_some_and(|l| l.to_lowercase().contains(&query_lower))
+                    || e.url
+                        .as_ref()
+                        .is_some_and(|u| u.to_lowercase().contains(&query_lower))
                     || e.notes
                         .as_ref()
                         .is_some_and(|n| n.to_lowercase().contains(&query_lower))
@@ -324,12 +346,15 @@ impl CalendarStore {
     }
 
     #[allow(clippy::too_many_arguments)]
+    #[allow(clippy::too_many_arguments)]
     pub fn update_event(
         &self,
         event_id: &str,
         title: Option<&str>,
         start: Option<NaiveDateTime>,
         end: Option<NaiveDateTime>,
+        location: Option<&str>,
+        url: Option<&str>,
         notes: Option<&str>,
         calendar_name: Option<&str>,
         all_day: Option<bool>,
@@ -341,6 +366,18 @@ impl CalendarStore {
         if let Some(t) = title {
             let ns = NSString::from_str(t);
             unsafe { event.setTitle(Some(&ns)) };
+        }
+
+        if let Some(loc) = location {
+            let ns = NSString::from_str(loc);
+            unsafe { event.setLocation(Some(&ns)) };
+        }
+
+        if let Some(u) = url {
+            let ns_url = NSURL::URLWithString(&NSString::from_str(u));
+            if let Some(ns_url) = ns_url {
+                unsafe { event.setURL(Some(&ns_url)) };
+            }
         }
 
         if let Some(s) = start {

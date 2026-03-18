@@ -26,7 +26,7 @@ pub enum OutputFormat {
         calx add --title \"Lunch\" --start \"next friday 12pm\" --end \"next friday 1pm\"\n  \
         calx search \"lunch\" --from 2026-03-01\n  \
         calx events --from 2026-03-18 --to 2026-03-25 -o json\n  \
-        calx export --format ics > events.ics"
+        calx today -o ics > events.ics"
 )]
 pub struct Cli {
     #[command(subcommand)]
@@ -93,15 +93,21 @@ pub enum Commands {
         /// Event title
         #[arg(long)]
         title: String,
-        /// Start date/time: YYYY-MM-DD HH:MM, "tomorrow 3pm", "来週月曜の10時"
+        /// Start date/time: YYYY-MM-DD HH:MM, "tomorrow 3pm", "next monday 10am"
         #[arg(long)]
         start: String,
-        /// End date/time: YYYY-MM-DD HH:MM, "tomorrow 4pm", "来週月曜の11時"
+        /// End date/time: YYYY-MM-DD HH:MM, "tomorrow 4pm", "next monday 11am"
         #[arg(long)]
         end: String,
         /// Target calendar (uses default if omitted)
         #[arg(long)]
         calendar: Option<String>,
+        /// Event location
+        #[arg(long)]
+        location: Option<String>,
+        /// Event URL
+        #[arg(long)]
+        url: Option<String>,
         /// Event notes
         #[arg(long)]
         notes: Option<String>,
@@ -123,6 +129,12 @@ pub enum Commands {
         /// New end date/time (supports natural language)
         #[arg(long)]
         end: Option<String>,
+        /// New location
+        #[arg(long)]
+        location: Option<String>,
+        /// New URL
+        #[arg(long)]
+        url: Option<String>,
         /// New notes
         #[arg(long)]
         notes: Option<String>,
@@ -146,7 +158,7 @@ pub enum Commands {
         event_id: String,
     },
 
-    /// Find events by keyword (searches title and notes)
+    /// Find events by keyword (searches title, notes, location, and calendar)
     Search {
         /// Search keyword
         query: String,

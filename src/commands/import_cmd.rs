@@ -76,7 +76,16 @@ fn import_ics(store: &CalendarStore, content: &str) -> Result<usize, AppError> {
                     } else {
                         Some(notes.replace("\\n", "\n"))
                     };
-                    store.add_event(&title, start_dt, end_dt, None, notes_opt.as_deref(), false)?;
+                    store.add_event(
+                        &title,
+                        start_dt,
+                        end_dt,
+                        None,
+                        None,
+                        None,
+                        notes_opt.as_deref(),
+                        false,
+                    )?;
                     count += 1;
                 }
             }
@@ -117,7 +126,7 @@ fn import_csv(store: &CalendarStore, content: &str) -> Result<usize, AppError> {
         let end_dt = parse_csv_datetime(end_str)
             .ok_or_else(|| AppError::InvalidDate(end_str.to_string()))?;
 
-        store.add_event(title, start_dt, end_dt, None, notes, false)?;
+        store.add_event(title, start_dt, end_dt, None, None, None, notes, false)?;
         count += 1;
     }
     Ok(count)
