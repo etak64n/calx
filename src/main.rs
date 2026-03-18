@@ -115,6 +115,7 @@ fn main() {
             all_day,
             ref repeat,
             repeat_count,
+            repeat_interval,
         } => commands::add::run(
             &store,
             title,
@@ -127,6 +128,7 @@ fn main() {
             all_day,
             repeat.as_deref(),
             repeat_count,
+            repeat_interval,
             cli.output,
         ),
         Commands::Update {

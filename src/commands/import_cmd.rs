@@ -121,45 +121,112 @@ fn import_single_event(
     let notes = get_prop_value(event, "DESCRIPTION");
     let notes_unescaped = notes.as_deref().map(ics_unescape);
     let title_unescaped = ics_unescape(&title);
+    let location = get_prop_value(event, "LOCATION").map(|s| ics_unescape(&s));
+    let url = get_prop_value(event, "URL");
 
     // Parse RRULE for recurrence
-    let (repeat, repeat_count) = parse_rrule(event);
+    let rrule = parse_rrule(event);
 
     store.add_event(
         &title_unescaped,
         start_dt,
         end_dt,
         None,
-        None,
-        None,
+        location.as_deref(),
+        url.as_deref(),
         notes_unescaped.as_deref(),
         is_all_day,
-        repeat.as_deref(),
-        repeat_count,
+        rrule.freq.as_deref(),
+        rrule.count,
+        rrule.interval,
     )?;
 
     Ok(Some(1))
 }
 
-/// Parse RRULE property into (frequency, count).
-fn parse_rrule(event: &IcalEvent) -> (Option<String>, Option<u32>) {
+struct RRuleInfo {
+    freq: Option<String>,
+    count: Option<u32>,
+    interval: Option<u32>,
+}
+
+/// Parse RRULE property into frequency, count, and interval.
+/// UNTIL is converted to an approximate COUNT based on frequency.
+fn parse_rrule(event: &IcalEvent) -> RRuleInfo {
     let rrule_val = match get_prop_value(event, "RRULE") {
         Some(v) => v,
-        None => return (None, None),
+        None => {
+            return RRuleInfo {
+                freq: None,
+                count: None,
+                interval: None,
+            };
+        }
     };
 
     let mut freq = None;
     let mut count = None;
+    let mut interval = None;
+    let mut until = None;
 
     for part in rrule_val.split(';') {
         if let Some(f) = part.strip_prefix("FREQ=") {
             freq = Some(f.to_lowercase());
         } else if let Some(c) = part.strip_prefix("COUNT=") {
             count = c.parse().ok();
+        } else if let Some(i) = part.strip_prefix("INTERVAL=") {
+            interval = i.parse().ok();
+        } else if let Some(u) = part.strip_prefix("UNTIL=") {
+            until = Some(u.to_string());
         }
     }
 
-    (freq, count)
+    // If UNTIL is set but COUNT is not, approximate COUNT from UNTIL
+    if count.is_none() {
+        if let (Some(until_str), Some(f)) = (&until, &freq) {
+            if let Some(start_prop) = get_prop(event, "DTSTART") {
+                if let Some(ref start_val) = start_prop.value {
+                    count = approximate_count_from_until(start_val, until_str, f, interval);
+                }
+            }
+        }
+    }
+
+    RRuleInfo {
+        freq,
+        count,
+        interval,
+    }
+}
+
+/// Approximate COUNT from UNTIL date by computing the number of occurrences.
+fn approximate_count_from_until(
+    start: &str,
+    until: &str,
+    freq: &str,
+    interval: Option<u32>,
+) -> Option<u32> {
+    let start_dt = parse_ics_datetime_with_tz(start, None)?;
+    let until_str = until.trim_end_matches('Z');
+    let until_dt = NaiveDateTime::parse_from_str(until_str, "%Y%m%dT%H%M%S")
+        .or_else(|_| {
+            chrono::NaiveDate::parse_from_str(until_str, "%Y%m%d")
+                .map(|d| d.and_hms_opt(23, 59, 59).unwrap())
+        })
+        .ok()?;
+
+    let days = (until_dt - start_dt).num_days().max(0) as u32;
+    let interval = interval.unwrap_or(1).max(1);
+
+    let count = match freq {
+        "daily" => days / interval,
+        "weekly" => days / (7 * interval),
+        "monthly" => days / (30 * interval),
+        "yearly" => days / (365 * interval),
+        _ => return None,
+    };
+
+    Some(count.max(1))
 }
 
 /// Parse ICS DURATION value (e.g. "PT1H", "PT30M", "P1D", "PT1H30M").
@@ -353,7 +420,8 @@ pub(crate) fn parse_ics_datetime_with_tz(s: &str, tzid: Option<&str>) -> Option<
             let dt = tz.from_local_datetime(&naive).earliest()?;
             Some(dt.with_timezone(&chrono::Local).naive_local())
         } else {
-            // Unknown TZID: treat as local time (best effort)
+            // Unknown TZID: treat as local time (best effort) with warning
+            eprintln!("Warning: unknown timezone '{tz_name}', treating as local time");
             Some(naive)
         }
     } else {
@@ -419,7 +487,7 @@ fn import_csv(store: &CalendarStore, content: &str) -> Result<usize, AppError> {
             .ok_or_else(|| AppError::InvalidDate(end_str.to_string()))?;
 
         store.add_event(
-            title, start_dt, end_dt, calendar, location, url, notes, all_day, None, None,
+            title, start_dt, end_dt, calendar, location, url, notes, all_day, None, None, None,
         )?;
         count += 1;
     }
@@ -623,16 +691,31 @@ mod tests {
     // --- RRULE parsing ---
 
     #[test]
-    fn test_parse_rrule_weekly() {
+    fn test_parse_rrule_weekly_with_count() {
         let mut event = IcalEvent::new();
         event.properties.push(Property {
             name: "RRULE".to_string(),
             value: Some("FREQ=WEEKLY;COUNT=10".to_string()),
             params: None,
         });
-        let (freq, count) = parse_rrule(&event);
-        assert_eq!(freq.as_deref(), Some("weekly"));
-        assert_eq!(count, Some(10));
+        let r = parse_rrule(&event);
+        assert_eq!(r.freq.as_deref(), Some("weekly"));
+        assert_eq!(r.count, Some(10));
+        assert_eq!(r.interval, None);
+    }
+
+    #[test]
+    fn test_parse_rrule_with_interval() {
+        let mut event = IcalEvent::new();
+        event.properties.push(Property {
+            name: "RRULE".to_string(),
+            value: Some("FREQ=WEEKLY;INTERVAL=2".to_string()),
+            params: None,
+        });
+        let r = parse_rrule(&event);
+        assert_eq!(r.freq.as_deref(), Some("weekly"));
+        assert_eq!(r.interval, Some(2));
+        assert_eq!(r.count, None);
     }
 
     #[test]
@@ -643,17 +726,18 @@ mod tests {
             value: Some("FREQ=DAILY".to_string()),
             params: None,
         });
-        let (freq, count) = parse_rrule(&event);
-        assert_eq!(freq.as_deref(), Some("daily"));
-        assert_eq!(count, None);
+        let r = parse_rrule(&event);
+        assert_eq!(r.freq.as_deref(), Some("daily"));
+        assert_eq!(r.count, None);
+        assert_eq!(r.interval, None);
     }
 
     #[test]
     fn test_parse_rrule_none() {
         let event = IcalEvent::new();
-        let (freq, count) = parse_rrule(&event);
-        assert!(freq.is_none());
-        assert!(count.is_none());
+        let r = parse_rrule(&event);
+        assert!(r.freq.is_none());
+        assert!(r.count.is_none());
     }
 
     // --- CSV datetime ---

@@ -156,6 +156,9 @@ pub enum Commands {
         /// Number of occurrences (default: forever)
         #[arg(long)]
         repeat_count: Option<u32>,
+        /// Repeat every N intervals (e.g. --repeat weekly --repeat-interval 2 = every 2 weeks)
+        #[arg(long)]
+        repeat_interval: Option<u32>,
     },
 
     /// Modify an existing event

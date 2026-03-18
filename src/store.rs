@@ -197,6 +197,7 @@ impl CalendarStore {
         all_day: bool,
         repeat: Option<&str>,
         repeat_count: Option<u32>,
+        repeat_interval: Option<u32>,
     ) -> Result<String, AppError> {
         let event = unsafe { EKEvent::eventWithEventStore(&self.store) };
 
@@ -264,11 +265,12 @@ impl CalendarStore {
             };
             let end = repeat_count
                 .map(|n| unsafe { EKRecurrenceEnd::recurrenceEndWithOccurrenceCount(n as usize) });
+            let interval = repeat_interval.unwrap_or(1) as isize;
             let rule = unsafe {
                 EKRecurrenceRule::initRecurrenceWithFrequency_interval_end(
                     EKRecurrenceRule::alloc(),
                     freq,
-                    1,
+                    interval,
                     end.as_deref(),
                 )
             };

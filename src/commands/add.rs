@@ -23,6 +23,7 @@ pub fn run(
     all_day: bool,
     repeat: Option<&str>,
     repeat_count: Option<u32>,
+    repeat_interval: Option<u32>,
     format: OutputFormat,
 ) -> Result<(), AppError> {
     let start_dt =
@@ -40,6 +41,7 @@ pub fn run(
         all_day,
         repeat,
         repeat_count,
+        repeat_interval,
     )?;
 
     let result = AddResult { event_id };
