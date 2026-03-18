@@ -95,6 +95,10 @@ fn ics_unescape(s: &str) -> String {
 
 fn import_ics(store: &CalendarStore, content: &str) -> Result<usize, AppError> {
     let lines = unfold_ics(content);
+
+    // First pass: collect VTIMEZONE TZID mappings for non-IANA IDs
+    let tz_map = build_vtimezone_map(&lines);
+
     let mut count = 0;
     let mut title = String::new();
     let mut start_raw = String::new();
@@ -120,9 +124,11 @@ fn import_ics(store: &CalendarStore, content: &str) -> Result<usize, AppError> {
             "END:VEVENT" if in_event => {
                 in_event = false;
                 if !title.is_empty() && !start_raw.is_empty() && !end_raw.is_empty() {
-                    let start_dt = parse_ics_datetime_with_tz(&start_raw, start_tzid.as_deref())
+                    let s_tzid = resolve_tzid(start_tzid.as_deref(), &tz_map);
+                    let e_tzid = resolve_tzid(end_tzid.as_deref(), &tz_map);
+                    let start_dt = parse_ics_datetime_with_tz(&start_raw, s_tzid.as_deref())
                         .ok_or_else(|| AppError::InvalidDate(start_raw.clone()))?;
-                    let end_dt = parse_ics_datetime_with_tz(&end_raw, end_tzid.as_deref())
+                    let end_dt = parse_ics_datetime_with_tz(&end_raw, e_tzid.as_deref())
                         .ok_or_else(|| AppError::InvalidDate(end_raw.clone()))?;
                     let notes_opt = if notes.is_empty() {
                         None
@@ -146,10 +152,10 @@ fn import_ics(store: &CalendarStore, content: &str) -> Result<usize, AppError> {
                 }
             }
             _ if in_event => {
-                if let Some(v) = line.strip_prefix("SUMMARY:") {
-                    title = v.to_string();
-                } else if let Some(v) = line.strip_prefix("DESCRIPTION:") {
-                    notes = v.to_string();
+                if line.starts_with("SUMMARY") {
+                    title = extract_ics_value(line);
+                } else if line.starts_with("DESCRIPTION") {
+                    notes = extract_ics_value(line);
                 } else if line.starts_with("DTSTART") {
                     let parsed = parse_ics_dt_line(line);
                     start_raw = parsed.value;
@@ -197,6 +203,113 @@ fn parse_ics_dt_line(line: &str) -> IcsDtParsed {
         tzid,
         all_day,
     }
+}
+
+/// Extract the value from an ICS property line, handling optional parameters.
+/// e.g. "SUMMARY;LANGUAGE=en:Meeting" -> "Meeting"
+/// e.g. "SUMMARY:Meeting" -> "Meeting"
+fn extract_ics_value(line: &str) -> String {
+    // Value is everything after the first ':' that follows the property name
+    if let Some(colon_pos) = line.find(':') {
+        line[colon_pos + 1..].to_string()
+    } else {
+        String::new()
+    }
+}
+
+/// Build a mapping from custom/Windows TZID to IANA name by reading VTIMEZONE blocks.
+fn build_vtimezone_map(lines: &[String]) -> std::collections::HashMap<String, String> {
+    let mut map = std::collections::HashMap::new();
+    let mut in_vtimezone = false;
+    let mut current_tzid = String::new();
+    let mut x_lic_location = String::new();
+
+    for line in lines {
+        match line.as_str() {
+            "BEGIN:VTIMEZONE" => {
+                in_vtimezone = true;
+                current_tzid.clear();
+                x_lic_location.clear();
+            }
+            "END:VTIMEZONE" => {
+                in_vtimezone = false;
+                if !current_tzid.is_empty() {
+                    // If the TZID isn't already a valid IANA name, try mapping it
+                    if current_tzid.parse::<chrono_tz::Tz>().is_err() {
+                        // Try X-LIC-LOCATION first (common in Outlook exports)
+                        if !x_lic_location.is_empty()
+                            && x_lic_location.parse::<chrono_tz::Tz>().is_ok()
+                        {
+                            map.insert(current_tzid.clone(), x_lic_location.clone());
+                        }
+                        // Try Windows timezone mapping
+                        if !map.contains_key(&current_tzid) {
+                            if let Some(iana) = windows_tz_to_iana(&current_tzid) {
+                                map.insert(current_tzid.clone(), iana.to_string());
+                            }
+                        }
+                    }
+                }
+            }
+            _ if in_vtimezone => {
+                if line.starts_with("TZID") {
+                    current_tzid = extract_ics_value(line);
+                } else if line.starts_with("X-LIC-LOCATION") {
+                    x_lic_location = extract_ics_value(line);
+                }
+            }
+            _ => {}
+        }
+    }
+    map
+}
+
+/// Resolve a TZID: try the raw name first (IANA), then check the VTIMEZONE map,
+/// then try Windows TZ mapping as a last resort.
+fn resolve_tzid(
+    tzid: Option<&str>,
+    tz_map: &std::collections::HashMap<String, String>,
+) -> Option<String> {
+    let name = tzid?;
+    // Already valid IANA?
+    if name.parse::<chrono_tz::Tz>().is_ok() {
+        return Some(name.to_string());
+    }
+    // Check VTIMEZONE mapping
+    if let Some(mapped) = tz_map.get(name) {
+        return Some(mapped.clone());
+    }
+    // Try Windows TZ name
+    if let Some(iana) = windows_tz_to_iana(name) {
+        return Some(iana.to_string());
+    }
+    // Return as-is (will fail at chrono-tz parse, treated as local)
+    Some(name.to_string())
+}
+
+/// Map common Windows timezone names to IANA names.
+fn windows_tz_to_iana(name: &str) -> Option<&'static str> {
+    Some(match name {
+        "Eastern Standard Time" => "America/New_York",
+        "Central Standard Time" => "America/Chicago",
+        "Mountain Standard Time" => "America/Denver",
+        "Pacific Standard Time" => "America/Los_Angeles",
+        "GMT Standard Time" => "Europe/London",
+        "W. Europe Standard Time" => "Europe/Berlin",
+        "Romance Standard Time" => "Europe/Paris",
+        "Russian Standard Time" => "Europe/Moscow",
+        "China Standard Time" => "Asia/Shanghai",
+        "Tokyo Standard Time" => "Asia/Tokyo",
+        "Korea Standard Time" => "Asia/Seoul",
+        "India Standard Time" => "Asia/Kolkata",
+        "AUS Eastern Standard Time" => "Australia/Sydney",
+        "New Zealand Standard Time" => "Pacific/Auckland",
+        "Singapore Standard Time" => "Asia/Singapore",
+        "SE Asia Standard Time" => "Asia/Bangkok",
+        "Arabian Standard Time" => "Asia/Dubai",
+        "UTC" => "UTC",
+        _ => return None,
+    })
 }
 
 /// Parse ICS datetime with optional IANA timezone (DST-aware via chrono-tz).
@@ -399,6 +512,93 @@ mod tests {
         let p = parse_ics_dt_line("DTSTART;TZID=America/New_York;X-FOO=bar:20260320T090000");
         assert_eq!(p.value, "20260320T090000");
         assert_eq!(p.tzid.as_deref(), Some("America/New_York"));
+    }
+
+    // --- Property value extraction ---
+
+    #[test]
+    fn test_extract_ics_value_simple() {
+        assert_eq!(extract_ics_value("SUMMARY:Meeting"), "Meeting");
+    }
+
+    #[test]
+    fn test_extract_ics_value_with_params() {
+        assert_eq!(
+            extract_ics_value("SUMMARY;LANGUAGE=en:Meeting with team"),
+            "Meeting with team"
+        );
+    }
+
+    #[test]
+    fn test_extract_ics_value_description_with_param() {
+        assert_eq!(
+            extract_ics_value("DESCRIPTION;ENCODING=BASE64:Notes here"),
+            "Notes here"
+        );
+    }
+
+    // --- Windows TZ mapping ---
+
+    #[test]
+    fn test_windows_tz_mapping() {
+        assert_eq!(
+            windows_tz_to_iana("Eastern Standard Time"),
+            Some("America/New_York")
+        );
+        assert_eq!(
+            windows_tz_to_iana("Tokyo Standard Time"),
+            Some("Asia/Tokyo")
+        );
+        assert_eq!(windows_tz_to_iana("Unknown TZ"), None);
+    }
+
+    // --- VTIMEZONE map ---
+
+    #[test]
+    fn test_build_vtimezone_map_with_x_lic_location() {
+        let lines = vec![
+            "BEGIN:VTIMEZONE".to_string(),
+            "TZID:Custom/Eastern".to_string(),
+            "X-LIC-LOCATION:America/New_York".to_string(),
+            "END:VTIMEZONE".to_string(),
+        ];
+        let map = build_vtimezone_map(&lines);
+        assert_eq!(
+            map.get("Custom/Eastern").map(|s| s.as_str()),
+            Some("America/New_York")
+        );
+    }
+
+    #[test]
+    fn test_build_vtimezone_map_windows_tz() {
+        let lines = vec![
+            "BEGIN:VTIMEZONE".to_string(),
+            "TZID:Eastern Standard Time".to_string(),
+            "END:VTIMEZONE".to_string(),
+        ];
+        let map = build_vtimezone_map(&lines);
+        assert_eq!(
+            map.get("Eastern Standard Time").map(|s| s.as_str()),
+            Some("America/New_York")
+        );
+    }
+
+    #[test]
+    fn test_resolve_tzid_iana() {
+        let map = std::collections::HashMap::new();
+        assert_eq!(
+            resolve_tzid(Some("Asia/Tokyo"), &map).as_deref(),
+            Some("Asia/Tokyo")
+        );
+    }
+
+    #[test]
+    fn test_resolve_tzid_windows() {
+        let map = std::collections::HashMap::new();
+        assert_eq!(
+            resolve_tzid(Some("Eastern Standard Time"), &map).as_deref(),
+            Some("America/New_York")
+        );
     }
 
     #[test]
