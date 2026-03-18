@@ -111,31 +111,25 @@ pub fn print_events(
             0
         };
 
-        let mut current_date = String::new();
+        let date_w = 10; // "YYYY-MM-DD"
         let mut row = 1;
 
-        for ev in evts {
-            let date_str = ev.start.format("%A, %B %-d, %Y").to_string();
-            if date_str != current_date {
-                if !current_date.is_empty() {
-                    println!();
-                }
-                println!("{bold}{date_str}{reset}");
-                if !no_header {
-                    if verbose {
-                        println!(
-                            "{dim}  {:>3}  {:<TIME_W$}  {:<title_w$}  {:<cal_w$}  {:<dur_w$}  {:<notes_w$}  ID{reset}",
-                            "#", "TIME", "TITLE", "CALENDAR", "DURATION", "NOTES",
-                        );
-                    } else {
-                        println!(
-                            "{dim}  {:>3}  {:<TIME_W$}  {:<title_w$}  {:<cal_w$}  DURATION{reset}",
-                            "#", "TIME", "TITLE", "CALENDAR",
-                        );
-                    }
-                }
-                current_date = date_str;
+        if !no_header {
+            if verbose {
+                println!(
+                    "{dim}  {:>3}  {:<date_w$}  {:<TIME_W$}  {:<title_w$}  {:<cal_w$}  {:<dur_w$}  {:<notes_w$}  ID{reset}",
+                    "#", "DATE", "TIME", "TITLE", "CALENDAR", "DURATION", "NOTES",
+                );
+            } else {
+                println!(
+                    "{dim}  {:>3}  {:<date_w$}  {:<TIME_W$}  {:<title_w$}  {:<cal_w$}  DURATION{reset}",
+                    "#", "DATE", "TIME", "TITLE", "CALENDAR",
+                );
             }
+        }
+
+        for ev in evts {
+            let date_p = ev.start.format("%Y-%m-%d").to_string();
 
             let is_past = ev.end < now;
             let is_now = ev.start <= now && ev.end > now;
@@ -179,19 +173,19 @@ pub fn print_events(
 
             if is_past {
                 println!(
-                    "{dim}  {row:>3}  {time_p}  {title_p}  {cal_p}  {dur_p}{verbose_suffix}{reset}"
+                    "{dim}  {row:>3}  {date_p}  {time_p}  {title_p}  {cal_p}  {dur_p}{verbose_suffix}{reset}"
                 );
             } else if is_now {
                 println!(
-                    "  {row:>3}  {green}{bold}{time_p}{reset}  {bold}{title_p}{reset}  {dim}{cal_p}{reset}  {dim}{dur_p}{verbose_suffix}{reset}"
+                    "  {row:>3}  {date_p}  {green}{bold}{time_p}{reset}  {bold}{title_p}{reset}  {dim}{cal_p}{reset}  {dim}{dur_p}{verbose_suffix}{reset}"
                 );
             } else if ev.all_day {
                 println!(
-                    "  {row:>3}  {cyan}{time_p}{reset}  {bold}{title_p}{reset}  {dim}{cal_p}{reset}  {dim}{dur_p}{verbose_suffix}{reset}"
+                    "  {row:>3}  {date_p}  {cyan}{time_p}{reset}  {bold}{title_p}{reset}  {dim}{cal_p}{reset}  {dim}{dur_p}{verbose_suffix}{reset}"
                 );
             } else {
                 println!(
-                    "  {row:>3}  {time_p}  {bold}{title_p}{reset}  {dim}{cal_p}{reset}  {dim}{dur_p}{verbose_suffix}{reset}"
+                    "  {row:>3}  {date_p}  {time_p}  {bold}{title_p}{reset}  {dim}{cal_p}{reset}  {dim}{dur_p}{verbose_suffix}{reset}"
                 );
             }
 
