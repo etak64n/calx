@@ -160,3 +160,19 @@ fn value_to_string(v: &serde_json::Value) -> String {
         other => other.to_string(),
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_value_to_string_variants() {
+        assert_eq!(
+            value_to_string(&serde_json::Value::String("hello".into())),
+            "hello"
+        );
+        assert_eq!(value_to_string(&serde_json::Value::Null), "");
+        assert_eq!(value_to_string(&serde_json::Value::Bool(true)), "true");
+        assert_eq!(value_to_string(&serde_json::json!(42)), "42");
+    }
+}

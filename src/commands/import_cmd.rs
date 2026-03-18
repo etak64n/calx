@@ -123,7 +123,7 @@ fn import_csv(store: &CalendarStore, content: &str) -> Result<usize, AppError> {
     Ok(count)
 }
 
-fn parse_ics_datetime(s: &str) -> Option<NaiveDateTime> {
+pub(crate) fn parse_ics_datetime(s: &str) -> Option<NaiveDateTime> {
     NaiveDateTime::parse_from_str(s, "%Y%m%dT%H%M%S")
         .or_else(|_| {
             chrono::NaiveDate::parse_from_str(s, "%Y%m%d").map(|d| d.and_hms_opt(0, 0, 0).unwrap())
@@ -131,7 +131,7 @@ fn parse_ics_datetime(s: &str) -> Option<NaiveDateTime> {
         .ok()
 }
 
-fn parse_csv_datetime(s: &str) -> Option<NaiveDateTime> {
+pub(crate) fn parse_csv_datetime(s: &str) -> Option<NaiveDateTime> {
     chrono::DateTime::parse_from_rfc3339(s)
         .map(|dt| dt.naive_local())
         .ok()
@@ -141,4 +141,61 @@ fn parse_csv_datetime(s: &str) -> Option<NaiveDateTime> {
                 .map(|d| d.and_hms_opt(0, 0, 0).unwrap())
                 .ok()
         })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use chrono::{Datelike, Timelike};
+
+    // --- ICS datetime parsing ---
+
+    #[test]
+    fn test_ics_datetime_full() {
+        let dt = parse_ics_datetime("20260320T140000").unwrap();
+        assert_eq!(dt.year(), 2026);
+        assert_eq!(dt.month(), 3);
+        assert_eq!(dt.day(), 20);
+        assert_eq!(dt.hour(), 14);
+    }
+
+    #[test]
+    fn test_ics_datetime_date_only() {
+        let dt = parse_ics_datetime("20260320").unwrap();
+        assert_eq!(dt.day(), 20);
+        assert_eq!(dt.hour(), 0);
+    }
+
+    #[test]
+    fn test_ics_datetime_invalid() {
+        assert!(parse_ics_datetime("not-a-date").is_none());
+        assert!(parse_ics_datetime("").is_none());
+    }
+
+    // --- CSV datetime parsing ---
+
+    #[test]
+    fn test_csv_datetime_rfc3339() {
+        let dt = parse_csv_datetime("2026-03-18T11:00:00+09:00").unwrap();
+        assert_eq!(dt.hour(), 11);
+        assert_eq!(dt.day(), 18);
+    }
+
+    #[test]
+    fn test_csv_datetime_simple() {
+        let dt = parse_csv_datetime("2026-03-20 14:00").unwrap();
+        assert_eq!(dt.hour(), 14);
+        assert_eq!(dt.day(), 20);
+    }
+
+    #[test]
+    fn test_csv_datetime_date_only() {
+        let dt = parse_csv_datetime("2026-03-20").unwrap();
+        assert_eq!(dt.hour(), 0);
+    }
+
+    #[test]
+    fn test_csv_datetime_invalid() {
+        assert!(parse_csv_datetime("garbage").is_none());
+    }
 }

@@ -242,48 +242,234 @@ fn next_weekday_this_week(from: NaiveDate, target: Weekday) -> NaiveDate {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use chrono::Timelike;
+
+    // --- Standard formats ---
 
     #[test]
-    fn test_standard_formats() {
-        assert!(parse_datetime("2026-03-20 14:00").is_some());
-        assert!(parse_datetime("2026-03-20").is_some());
+    fn test_standard_datetime() {
+        let dt = parse_datetime("2026-03-20 14:00").unwrap();
+        assert_eq!(dt.hour(), 14);
+        assert_eq!(dt.minute(), 0);
+        assert_eq!(dt.day(), 20);
     }
 
     #[test]
-    fn test_english_natural() {
-        assert!(parse_datetime("tomorrow").is_some());
-        assert!(parse_datetime("today 3pm").is_some());
-        assert!(parse_datetime("tomorrow 14:00").is_some());
-        assert!(parse_datetime("next monday").is_some());
-        assert!(parse_datetime("next friday 9am").is_some());
-        assert!(parse_datetime("in 3 days").is_some());
+    fn test_standard_date_only() {
+        let dt = parse_datetime("2026-03-20").unwrap();
+        assert_eq!(dt.hour(), 0);
+        assert_eq!(dt.day(), 20);
     }
 
     #[test]
-    fn test_japanese_natural() {
-        assert!(parse_datetime("明日").is_some());
-        assert!(parse_datetime("明日の3時").is_some());
-        assert!(parse_datetime("明日の午後3時").is_some());
-        assert!(parse_datetime("来週月曜").is_some());
-        assert!(parse_datetime("来週火曜の15時").is_some());
-        assert!(parse_datetime("今日").is_some());
-        assert!(parse_datetime("明後日の9時30分").is_some());
+    fn test_invalid_format_returns_none() {
+        assert!(parse_datetime("not a date").is_none());
+        assert!(parse_datetime("").is_none());
+        assert!(parse_datetime("2026-13-01").is_none());
+    }
+
+    // --- parse_date ---
+
+    #[test]
+    fn test_parse_date_standard() {
+        let d = parse_date("2026-03-20").unwrap();
+        assert_eq!(d, NaiveDate::from_ymd_opt(2026, 3, 20).unwrap());
     }
 
     #[test]
-    fn test_time_only() {
+    fn test_parse_date_natural() {
+        assert!(parse_date("tomorrow").is_some());
+        assert!(parse_date("today").is_some());
+    }
+
+    #[test]
+    fn test_parse_date_invalid() {
+        assert!(parse_date("nope").is_none());
+    }
+
+    // --- English natural language ---
+
+    #[test]
+    fn test_english_today() {
+        let dt = parse_datetime("today").unwrap();
+        assert_eq!(dt.date(), Local::now().date_naive());
+    }
+
+    #[test]
+    fn test_english_tomorrow() {
+        let dt = parse_datetime("tomorrow").unwrap();
+        let expected = Local::now().date_naive() + Duration::days(1);
+        assert_eq!(dt.date(), expected);
+    }
+
+    #[test]
+    fn test_english_yesterday() {
+        let dt = parse_datetime("yesterday").unwrap();
+        let expected = Local::now().date_naive() - Duration::days(1);
+        assert_eq!(dt.date(), expected);
+    }
+
+    #[test]
+    fn test_english_today_with_time() {
+        let dt = parse_datetime("today 3pm").unwrap();
+        assert_eq!(dt.date(), Local::now().date_naive());
+        assert_eq!(dt.hour(), 15);
+    }
+
+    #[test]
+    fn test_english_tomorrow_with_24h_time() {
+        let dt = parse_datetime("tomorrow 14:00").unwrap();
+        assert_eq!(dt.hour(), 14);
+    }
+
+    #[test]
+    fn test_english_next_weekday() {
+        let dt = parse_datetime("next monday").unwrap();
+        assert_eq!(dt.weekday(), Weekday::Mon);
+        assert!(dt.date() > Local::now().date_naive());
+    }
+
+    #[test]
+    fn test_english_next_weekday_with_time() {
+        let dt = parse_datetime("next friday 9am").unwrap();
+        assert_eq!(dt.weekday(), Weekday::Fri);
+        assert_eq!(dt.hour(), 9);
+    }
+
+    #[test]
+    fn test_english_in_n_days() {
+        let dt = parse_datetime("in 3 days").unwrap();
+        let expected = Local::now().date_naive() + Duration::days(3);
+        assert_eq!(dt.date(), expected);
+    }
+
+    #[test]
+    fn test_english_in_1_day() {
+        let dt = parse_datetime("in 1 day").unwrap();
+        let expected = Local::now().date_naive() + Duration::days(1);
+        assert_eq!(dt.date(), expected);
+    }
+
+    // --- Japanese natural language ---
+
+    #[test]
+    fn test_jp_today() {
+        let dt = parse_datetime("今日").unwrap();
+        assert_eq!(dt.date(), Local::now().date_naive());
+    }
+
+    #[test]
+    fn test_jp_tomorrow() {
+        let dt = parse_datetime("明日").unwrap();
+        let expected = Local::now().date_naive() + Duration::days(1);
+        assert_eq!(dt.date(), expected);
+    }
+
+    #[test]
+    fn test_jp_day_after_tomorrow() {
+        let dt = parse_datetime("明後日").unwrap();
+        let expected = Local::now().date_naive() + Duration::days(2);
+        assert_eq!(dt.date(), expected);
+    }
+
+    #[test]
+    fn test_jp_tomorrow_with_time() {
+        let dt = parse_datetime("明日の3時").unwrap();
+        assert_eq!(dt.hour(), 3);
+    }
+
+    #[test]
+    fn test_jp_tomorrow_with_pm() {
+        let dt = parse_datetime("明日の午後3時").unwrap();
+        assert_eq!(dt.hour(), 15);
+    }
+
+    #[test]
+    fn test_jp_tomorrow_with_am() {
+        let dt = parse_datetime("明日の午前9時").unwrap();
+        assert_eq!(dt.hour(), 9);
+    }
+
+    #[test]
+    fn test_jp_next_week_weekday() {
+        let dt = parse_datetime("来週月曜").unwrap();
+        assert_eq!(dt.weekday(), Weekday::Mon);
+    }
+
+    #[test]
+    fn test_jp_next_week_with_time() {
+        let dt = parse_datetime("来週火曜の15時").unwrap();
+        assert_eq!(dt.weekday(), Weekday::Tue);
+        assert_eq!(dt.hour(), 15);
+    }
+
+    #[test]
+    fn test_jp_time_with_minutes() {
+        let dt = parse_datetime("明後日の9時30分").unwrap();
+        assert_eq!(dt.hour(), 9);
+        assert_eq!(dt.minute(), 30);
+    }
+
+    // --- Time parsing ---
+
+    #[test]
+    fn test_time_12h() {
         assert_eq!(parse_time_str("3pm"), NaiveTime::from_hms_opt(15, 0, 0));
         assert_eq!(parse_time_str("11am"), NaiveTime::from_hms_opt(11, 0, 0));
-        assert_eq!(parse_time_str("14:00"), NaiveTime::from_hms_opt(14, 0, 0));
+        assert_eq!(parse_time_str("12pm"), NaiveTime::from_hms_opt(12, 0, 0));
+        assert_eq!(parse_time_str("12am"), NaiveTime::from_hms_opt(0, 0, 0));
     }
 
     #[test]
-    fn test_jp_time() {
+    fn test_time_24h() {
+        assert_eq!(parse_time_str("14:00"), NaiveTime::from_hms_opt(14, 0, 0));
+        assert_eq!(parse_time_str("9:30"), NaiveTime::from_hms_opt(9, 30, 0));
+        assert_eq!(parse_time_str("0:00"), NaiveTime::from_hms_opt(0, 0, 0));
+    }
+
+    #[test]
+    fn test_time_invalid() {
+        assert!(parse_time_str("abc").is_none());
+        assert!(parse_time_str("25:00").is_none());
+    }
+
+    // --- Japanese time parsing ---
+
+    #[test]
+    fn test_jp_time_gozen_gogo() {
         assert_eq!(parse_jp_time("午後3時"), NaiveTime::from_hms_opt(15, 0, 0));
         assert_eq!(parse_jp_time("午前9時"), NaiveTime::from_hms_opt(9, 0, 0));
+        assert_eq!(parse_jp_time("午後12時"), NaiveTime::from_hms_opt(12, 0, 0));
+        assert_eq!(parse_jp_time("午前12時"), NaiveTime::from_hms_opt(0, 0, 0));
+    }
+
+    #[test]
+    fn test_jp_time_24h() {
+        assert_eq!(parse_jp_time("15時"), NaiveTime::from_hms_opt(15, 0, 0));
         assert_eq!(
             parse_jp_time("15時30分"),
             NaiveTime::from_hms_opt(15, 30, 0)
         );
+        assert_eq!(parse_jp_time("0時"), NaiveTime::from_hms_opt(0, 0, 0));
+    }
+
+    // --- Weekday parsing ---
+
+    #[test]
+    fn test_en_weekdays() {
+        assert_eq!(parse_en_weekday("monday"), Some(Weekday::Mon));
+        assert_eq!(parse_en_weekday("tue"), Some(Weekday::Tue));
+        assert_eq!(parse_en_weekday("friday"), Some(Weekday::Fri));
+        assert_eq!(parse_en_weekday("sun"), Some(Weekday::Sun));
+        assert_eq!(parse_en_weekday("xyz"), None);
+    }
+
+    #[test]
+    fn test_jp_weekdays() {
+        assert_eq!(parse_jp_weekday("月"), Some(Weekday::Mon));
+        assert_eq!(parse_jp_weekday("火曜"), Some(Weekday::Tue));
+        assert_eq!(parse_jp_weekday("水曜日"), Some(Weekday::Wed));
+        assert_eq!(parse_jp_weekday("日"), Some(Weekday::Sun));
+        assert_eq!(parse_jp_weekday("xyz"), None);
     }
 }

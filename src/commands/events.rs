@@ -184,7 +184,7 @@ pub fn print_events(
     });
 }
 
-fn filter_fields(
+pub(crate) fn filter_fields(
     events: &[EventInfo],
     fields: &[&str],
 ) -> Vec<serde_json::Map<String, serde_json::Value>> {
@@ -204,7 +204,7 @@ fn filter_fields(
         .collect()
 }
 
-fn format_duration(d: chrono::Duration) -> String {
+pub(crate) fn format_duration(d: chrono::Duration) -> String {
     let mins = d.num_minutes();
     if mins < 60 {
         format!("{mins}m")
@@ -212,5 +212,96 @@ fn format_duration(d: chrono::Duration) -> String {
         format!("{}h", mins / 60)
     } else {
         format!("{}h {}m", mins / 60, mins % 60)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::store::EventInfo;
+    use chrono::{Local, TimeZone};
+
+    fn make_event(title: &str, calendar: &str, notes: Option<&str>) -> EventInfo {
+        let start = Local.with_ymd_and_hms(2026, 3, 20, 14, 0, 0).unwrap();
+        let end = Local.with_ymd_and_hms(2026, 3, 20, 15, 0, 0).unwrap();
+        EventInfo {
+            id: "test-id".to_string(),
+            title: title.to_string(),
+            start,
+            end,
+            calendar: calendar.to_string(),
+            notes: notes.map(|s| s.to_string()),
+            all_day: false,
+        }
+    }
+
+    #[test]
+    fn test_format_duration_minutes() {
+        assert_eq!(format_duration(chrono::Duration::minutes(30)), "30m");
+        assert_eq!(format_duration(chrono::Duration::minutes(5)), "5m");
+        assert_eq!(format_duration(chrono::Duration::minutes(0)), "0m");
+    }
+
+    #[test]
+    fn test_format_duration_hours() {
+        assert_eq!(format_duration(chrono::Duration::hours(1)), "1h");
+        assert_eq!(format_duration(chrono::Duration::hours(3)), "3h");
+    }
+
+    #[test]
+    fn test_format_duration_mixed() {
+        assert_eq!(format_duration(chrono::Duration::minutes(90)), "1h 30m");
+        assert_eq!(format_duration(chrono::Duration::minutes(150)), "2h 30m");
+    }
+
+    #[test]
+    fn test_filter_fields_subset() {
+        let events = vec![make_event("Meeting", "Work", None)];
+        let result = filter_fields(&events, &["title", "calendar"]);
+        assert_eq!(result.len(), 1);
+        assert!(result[0].contains_key("title"));
+        assert!(result[0].contains_key("calendar"));
+        assert!(!result[0].contains_key("id"));
+        assert!(!result[0].contains_key("start"));
+    }
+
+    #[test]
+    fn test_filter_fields_all() {
+        let events = vec![make_event("Meeting", "Work", Some("notes"))];
+        let result = filter_fields(
+            &events,
+            &[
+                "id", "title", "start", "end", "calendar", "notes", "all_day",
+            ],
+        );
+        assert_eq!(result[0].len(), 7);
+    }
+
+    #[test]
+    fn test_filter_fields_nonexistent() {
+        let events = vec![make_event("Meeting", "Work", None)];
+        let result = filter_fields(&events, &["nonexistent"]);
+        assert!(result[0].is_empty());
+    }
+
+    #[test]
+    fn test_filter_fields_empty_events() {
+        let events: Vec<EventInfo> = vec![];
+        let result = filter_fields(&events, &["title"]);
+        assert!(result.is_empty());
+    }
+
+    #[test]
+    fn test_pad_right_ascii() {
+        assert_eq!(pad_right("abc", 6), "abc   ");
+        assert_eq!(pad_right("abc", 3), "abc");
+        assert_eq!(pad_right("abc", 1), "abc");
+    }
+
+    #[test]
+    fn test_pad_right_cjk() {
+        // CJK characters are 2 columns wide
+        assert_eq!(pad_right("会議", 6), "会議  "); // 4 + 2 spaces = 6
+        assert_eq!(pad_right("会議", 4), "会議"); // exactly 4
     }
 }
