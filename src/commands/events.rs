@@ -3,15 +3,10 @@ use crate::error::AppError;
 use crate::output::print_output;
 use crate::store::{CalendarStore, EventInfo};
 use chrono::{Duration, Local, NaiveDate};
+use std::io::IsTerminal;
 use unicode_width::UnicodeWidthStr;
 
-const BOLD: &str = "\x1b[1m";
-const DIM: &str = "\x1b[2m";
-const RESET: &str = "\x1b[0m";
-const GREEN: &str = "\x1b[32m";
-const CYAN: &str = "\x1b[36m";
-
-const TIME_W: usize = 15; // "HH:MM – HH:MM  " or "┄┄┄ all day ┄┄┄"
+const TIME_W: usize = 15;
 
 pub fn run(
     store: &CalendarStore,
@@ -50,14 +45,23 @@ fn pad_right(s: &str, width: usize) -> String {
 
 pub fn print_events(events: Vec<EventInfo>, format: OutputFormat) {
     print_output(format, &events, |evts| {
+        let tty = std::io::stdout().is_terminal();
+
         if evts.is_empty() {
-            println!("{DIM}No events found.{RESET}");
+            if tty {
+                println!("No events found.");
+            }
             return;
         }
 
+        let (bold, dim, reset, green, cyan) = if tty {
+            ("\x1b[1m", "\x1b[2m", "\x1b[0m", "\x1b[32m", "\x1b[36m")
+        } else {
+            ("", "", "", "", "")
+        };
+
         let now = Local::now();
 
-        // Calculate column widths
         let title_w = evts
             .iter()
             .map(|e| UnicodeWidthStr::width(e.title.as_str()))
@@ -73,8 +77,6 @@ pub fn print_events(events: Vec<EventInfo>, format: OutputFormat) {
 
         let mut current_date = String::new();
         let mut row = 1;
-
-        // notes indent = "  " + ### + "  " + TIME_W + "  " = 2+3+2+15+2 = 24
         let notes_indent = " ".repeat(2 + 3 + 2 + TIME_W + 2);
 
         for ev in evts {
@@ -83,43 +85,53 @@ pub fn print_events(events: Vec<EventInfo>, format: OutputFormat) {
                 if !current_date.is_empty() {
                     println!();
                 }
-                println!("{BOLD}{date_str}{RESET}");
-                println!(
-                    "{DIM}  {:>3}  {:<TIME_W$}  {:<title_w$}  {:<cal_w$}  DURATION{RESET}",
-                    "#", "TIME", "TITLE", "CALENDAR",
-                );
+                println!("{bold}{date_str}{reset}");
+                if tty {
+                    println!(
+                        "{dim}  {:>3}  {:<TIME_W$}  {:<title_w$}  {:<cal_w$}  DURATION{reset}",
+                        "#", "TIME", "TITLE", "CALENDAR",
+                    );
+                }
                 current_date = date_str;
             }
 
             let is_past = ev.end < now;
             let is_now = ev.start <= now && ev.end > now;
-
             let duration = format_duration(ev.end.signed_duration_since(ev.start));
             let title_p = pad_right(&ev.title, title_w);
             let cal_p = pad_right(&ev.calendar, cal_w);
 
             if ev.all_day {
-                let time_str = "┄┄┄ all day ┄┄┄";
+                let time_str = if tty {
+                    "┄┄┄ all day ┄┄┄".to_string()
+                } else {
+                    pad_right("all day", TIME_W)
+                };
                 if is_past {
-                    println!("{DIM}  {row:>3}  {time_str}  {title_p}  {cal_p}  {duration}{RESET}");
+                    println!("{dim}  {row:>3}  {time_str}  {title_p}  {cal_p}  {duration}{reset}");
                 } else {
                     println!(
-                        "  {row:>3}  {CYAN}{time_str}{RESET}  {BOLD}{title_p}{RESET}  {DIM}{cal_p}{RESET}  {DIM}{duration}{RESET}"
+                        "  {row:>3}  {cyan}{time_str}{reset}  {bold}{title_p}{reset}  {dim}{cal_p}{reset}  {dim}{duration}{reset}"
                     );
                 }
             } else {
-                let time_str = format!("{} – {}", ev.start.format("%H:%M"), ev.end.format("%H:%M"));
+                let time_str = format!(
+                    "{} {} {}",
+                    ev.start.format("%H:%M"),
+                    if tty { "\u{2013}" } else { "-" },
+                    ev.end.format("%H:%M"),
+                );
                 let time_p = pad_right(&time_str, TIME_W);
 
                 if is_past {
-                    println!("{DIM}  {row:>3}  {time_p}  {title_p}  {cal_p}  {duration}{RESET}");
+                    println!("{dim}  {row:>3}  {time_p}  {title_p}  {cal_p}  {duration}{reset}");
                 } else if is_now {
                     println!(
-                        "  {row:>3}  {GREEN}{BOLD}{time_p}{RESET}  {BOLD}{title_p}{RESET}  {DIM}{cal_p}{RESET}  {DIM}{duration}{RESET}"
+                        "  {row:>3}  {green}{bold}{time_p}{reset}  {bold}{title_p}{reset}  {dim}{cal_p}{reset}  {dim}{duration}{reset}"
                     );
                 } else {
                     println!(
-                        "  {row:>3}  {time_p}  {BOLD}{title_p}{RESET}  {DIM}{cal_p}{RESET}  {DIM}{duration}{RESET}"
+                        "  {row:>3}  {time_p}  {bold}{title_p}{reset}  {dim}{cal_p}{reset}  {dim}{duration}{reset}"
                     );
                 }
             }
@@ -127,7 +139,7 @@ pub fn print_events(events: Vec<EventInfo>, format: OutputFormat) {
             if let Some(notes) = &ev.notes {
                 let first_line = notes.lines().next().unwrap_or("");
                 if !first_line.is_empty() {
-                    println!("{notes_indent}{DIM}{first_line}{RESET}");
+                    println!("{notes_indent}{dim}{first_line}{reset}");
                 }
             }
 

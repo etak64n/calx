@@ -14,7 +14,7 @@ pub struct CalendarInfo {
     pub source: String,
 }
 
-#[derive(Serialize)]
+#[derive(Serialize, serde::Deserialize)]
 pub struct EventInfo {
     pub id: String,
     pub title: String,

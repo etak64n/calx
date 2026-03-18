@@ -8,6 +8,7 @@ pub enum OutputFormat {
     Yaml,
     Csv,
     Tsv,
+    Ics,
 }
 
 #[derive(Parser)]
@@ -140,37 +141,18 @@ pub enum Commands {
         to: Option<String>,
     },
 
-    /// Live-display the next upcoming event with countdown
-    Watch {
+    /// Show the next upcoming event (composable with `watch(1)`)
+    Next {
         /// Filter by calendar name
         #[arg(long)]
         calendar: Option<String>,
     },
 
-    /// Export events to ICS or CSV format (writes to stdout)
-    Export {
-        /// Output format: ics, csv
-        #[arg(long, default_value = "ics")]
-        format: String,
-        /// Start date (default: today)
-        #[arg(long)]
-        from: Option<String>,
-        /// End date (default: 30 days ahead)
-        #[arg(long)]
-        to: Option<String>,
-        /// Filter by calendar name
-        #[arg(long)]
-        calendar: Option<String>,
-    },
-
-    /// Import events from an ICS or CSV file
+    /// Import events from an ICS or CSV file (use "-" for stdin)
     Import {
-        /// Path to .ics or .csv file
+        /// Path to .ics or .csv file, or "-" for stdin
         file: String,
     },
-
-    /// Create an event with guided prompts
-    Interactive,
 
     /// Generate shell completion script
     Completions {

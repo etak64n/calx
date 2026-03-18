@@ -4,7 +4,7 @@ use crate::output::print_output;
 use crate::store::CalendarStore;
 use chrono::NaiveDateTime;
 use serde::Serialize;
-use std::fs;
+use std::io::Read;
 
 #[derive(Serialize)]
 struct ImportResult {
@@ -12,16 +12,30 @@ struct ImportResult {
 }
 
 pub fn run(store: &CalendarStore, file: &str, format: OutputFormat) -> Result<(), AppError> {
-    let content = fs::read_to_string(file)
-        .map_err(|e| AppError::EventKit(format!("Failed to read file: {e}")))?;
+    let content = if file == "-" {
+        let mut buf = String::new();
+        std::io::stdin()
+            .read_to_string(&mut buf)
+            .map_err(|e| AppError::EventKit(format!("Failed to read stdin: {e}")))?;
+        buf
+    } else {
+        std::fs::read_to_string(file)
+            .map_err(|e| AppError::EventKit(format!("Failed to read file: {e}")))?
+    };
 
-    let count = if file.ends_with(".ics") {
+    let is_ics = if file == "-" {
+        content.trim_start().starts_with("BEGIN:VCALENDAR")
+    } else {
+        file.ends_with(".ics")
+    };
+
+    let count = if is_ics {
         import_ics(store, &content)?
-    } else if file.ends_with(".csv") {
+    } else if file == "-" || file.ends_with(".csv") {
         import_csv(store, &content)?
     } else {
         return Err(AppError::EventKit(
-            "Unknown file format. Use .ics or .csv".to_string(),
+            "Unknown file format. Use .ics or .csv, or pipe via stdin.".to_string(),
         ));
     };
 
@@ -110,7 +124,6 @@ fn import_csv(store: &CalendarStore, content: &str) -> Result<usize, AppError> {
 }
 
 fn parse_ics_datetime(s: &str) -> Option<NaiveDateTime> {
-    // 20260320T140000
     NaiveDateTime::parse_from_str(s, "%Y%m%dT%H%M%S")
         .or_else(|_| {
             chrono::NaiveDate::parse_from_str(s, "%Y%m%d").map(|d| d.and_hms_opt(0, 0, 0).unwrap())
@@ -119,7 +132,6 @@ fn parse_ics_datetime(s: &str) -> Option<NaiveDateTime> {
 }
 
 fn parse_csv_datetime(s: &str) -> Option<NaiveDateTime> {
-    // Try RFC3339 first, then fallback
     chrono::DateTime::parse_from_rfc3339(s)
         .map(|dt| dt.naive_local())
         .ok()

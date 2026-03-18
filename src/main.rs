@@ -86,15 +86,10 @@ fn main() {
             ref from,
             ref to,
         } => commands::search::run(&store, query, from.clone(), to.clone(), cli.output),
-        Commands::Watch { ref calendar } => commands::watch::run(&store, calendar.clone()),
-        Commands::Export {
-            ref format,
-            ref from,
-            ref to,
-            ref calendar,
-        } => commands::export::run(&store, format, from.clone(), to.clone(), calendar.clone()),
+        Commands::Next { ref calendar } => {
+            commands::next::run(&store, calendar.clone(), cli.output)
+        }
         Commands::Import { ref file } => commands::import_cmd::run(&store, file, cli.output),
-        Commands::Interactive => commands::interactive::run(&store, cli.output),
         Commands::Completions { .. } => unreachable!(),
     };
 
