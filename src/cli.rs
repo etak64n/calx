@@ -12,6 +12,12 @@ pub enum OutputFormat {
     Ics,
 }
 
+#[derive(Clone, Copy, ValueEnum)]
+pub enum RecurrenceScope {
+    This,
+    Future,
+}
+
 #[derive(Parser)]
 #[command(
     name = "calx",
@@ -69,7 +75,7 @@ pub enum Commands {
         /// Filter by calendar name
         #[arg(long)]
         calendar: Option<String>,
-        /// Sort by: date, title, calendar, duration
+        /// Sort by: date, start, title, calendar, duration
         #[arg(long)]
         sort: Option<String>,
         /// Maximum number of events to display
@@ -88,7 +94,7 @@ pub enum Commands {
         /// Filter by calendar name
         #[arg(long)]
         calendar: Option<String>,
-        /// Sort by: date, title, calendar, duration
+        /// Sort by: date, start, title, calendar, duration
         #[arg(long)]
         sort: Option<String>,
         /// Maximum number of events to display
@@ -110,7 +116,7 @@ pub enum Commands {
         /// Filter by calendar name
         #[arg(long)]
         calendar: Option<String>,
-        /// Sort by: date, title, calendar, duration
+        /// Sort by: date, start, title, calendar, duration
         #[arg(long)]
         sort: Option<String>,
         /// Maximum number of events to display
@@ -159,12 +165,63 @@ pub enum Commands {
         /// Repeat every N intervals (e.g. --repeat weekly --repeat-interval 2 = every 2 weeks)
         #[arg(long)]
         repeat_interval: Option<u32>,
+        /// Alert minutes before event (can be specified multiple times: --alert 10 --alert 60)
+        #[arg(long)]
+        alert: Vec<i64>,
+        /// Check for conflicts before creating
+        #[arg(long)]
+        check_conflicts: bool,
+    },
+
+    /// Find free time slots in a date range
+    Free {
+        /// Start date (YYYY-MM-DD or natural language). Defaults to today
+        #[arg(long)]
+        from: Option<String>,
+        /// End date (YYYY-MM-DD or natural language). Defaults to 5 days from start
+        #[arg(long)]
+        to: Option<String>,
+        /// Filter by calendar name
+        #[arg(long)]
+        calendar: Option<String>,
+        /// Minimum slot duration in minutes
+        #[arg(long, default_value = "30")]
+        duration: u32,
+        /// Day starts at (HH:MM). Default: 09:00
+        #[arg(long)]
+        after: Option<String>,
+        /// Day ends at (HH:MM). Default: 17:00
+        #[arg(long)]
+        before: Option<String>,
+        /// Maximum number of slots to display
+        #[arg(long)]
+        limit: Option<usize>,
     },
 
     /// Modify an existing event
     Update {
-        /// Event identifier (from 'show' or 'events -o json')
-        event_id: String,
+        /// Event identifier (mutually exclusive with --query)
+        #[arg(required_unless_present = "query", conflicts_with = "query")]
+        event_id: Option<String>,
+        /// Resolve a single event by search query
+        #[arg(
+            long,
+            required_unless_present = "event_id",
+            conflicts_with = "event_id"
+        )]
+        query: Option<String>,
+        /// Require an exact match when resolving --query
+        #[arg(long, requires = "query")]
+        exact: bool,
+        /// Limit --query to a calendar name
+        #[arg(long, requires = "query")]
+        in_calendar: Option<String>,
+        /// Start of --query range
+        #[arg(long, requires = "query")]
+        from: Option<String>,
+        /// End of --query range
+        #[arg(long, requires = "query")]
+        to: Option<String>,
         /// New title
         #[arg(long)]
         title: Option<String>,
@@ -189,34 +246,86 @@ pub enum Commands {
         /// Set as all-day event
         #[arg(long)]
         all_day: Option<bool>,
+        /// Scope for recurring events: this occurrence or this and future occurrences
+        #[arg(long)]
+        scope: Option<RecurrenceScope>,
     },
 
     /// Remove an event
     Delete {
-        /// Event identifier
-        event_id: String,
+        /// Event identifier (mutually exclusive with --query)
+        #[arg(required_unless_present = "query", conflicts_with = "query")]
+        event_id: Option<String>,
+        /// Resolve a single event by search query
+        #[arg(
+            long,
+            required_unless_present = "event_id",
+            conflicts_with = "event_id"
+        )]
+        query: Option<String>,
+        /// Require an exact match when resolving --query
+        #[arg(long, requires = "query")]
+        exact: bool,
+        /// Limit --query to a calendar name
+        #[arg(long, requires = "query")]
+        in_calendar: Option<String>,
+        /// Start of --query range
+        #[arg(long, requires = "query")]
+        from: Option<String>,
+        /// End of --query range
+        #[arg(long, requires = "query")]
+        to: Option<String>,
         /// Show what would be deleted without actually deleting
         #[arg(long)]
         dry_run: bool,
+        /// Scope for recurring events: this occurrence or this and future occurrences
+        #[arg(long)]
+        scope: Option<RecurrenceScope>,
     },
 
     /// Display full details of an event
     Show {
-        /// Event identifier
-        event_id: String,
+        /// Event identifier (mutually exclusive with --query)
+        #[arg(required_unless_present = "query", conflicts_with = "query")]
+        event_id: Option<String>,
+        /// Resolve a single event by search query
+        #[arg(
+            long,
+            required_unless_present = "event_id",
+            conflicts_with = "event_id"
+        )]
+        query: Option<String>,
+        /// Require an exact match when resolving --query
+        #[arg(long, requires = "query")]
+        exact: bool,
+        /// Limit --query to a calendar name
+        #[arg(long, requires = "query")]
+        in_calendar: Option<String>,
+        /// Start of --query range
+        #[arg(long, requires = "query")]
+        from: Option<String>,
+        /// End of --query range
+        #[arg(long, requires = "query")]
+        to: Option<String>,
     },
 
     /// Find events by keyword (searches title, notes, location, and calendar)
     Search {
         /// Search keyword
         query: String,
-        /// Start of search range (default: today)
+        /// Require an exact match
+        #[arg(long)]
+        exact: bool,
+        /// Limit search to a calendar name
+        #[arg(long)]
+        calendar: Option<String>,
+        /// Start of search range (default: 30 days ago)
         #[arg(long)]
         from: Option<String>,
         /// End of search range (default: 90 days ahead)
         #[arg(long)]
         to: Option<String>,
-        /// Sort by: date, title, calendar, duration
+        /// Sort by: date, start, title, calendar, duration
         #[arg(long)]
         sort: Option<String>,
         /// Maximum number of events to display

@@ -57,6 +57,16 @@ pub fn parse_date(s: &str) -> Option<NaiveDate> {
     date
 }
 
+/// Parse a date-only string for all-day events.
+/// Rejects any explicit time component.
+pub fn parse_all_day_date(s: &str) -> Option<NaiveDate> {
+    let s = s.trim();
+    if contains_explicit_time(s) {
+        return None;
+    }
+    parse_date(s)
+}
+
 fn split_date_time(
     s: &str,
     today: NaiveDate,
@@ -80,6 +90,40 @@ fn split_date_time(
     }
 
     (None, default_time)
+}
+
+fn contains_explicit_time(s: &str) -> bool {
+    let s = s.trim();
+    if s.is_empty() {
+        return false;
+    }
+
+    if NaiveDateTime::parse_from_str(s, "%Y-%m-%d %H:%M").is_ok() {
+        return true;
+    }
+
+    let lower = s.to_lowercase();
+    if parse_time_str(&lower).is_some() {
+        return true;
+    }
+
+    if let Some((_, tail)) = lower.rsplit_once(' ') {
+        if parse_time_str(tail).is_some() {
+            return true;
+        }
+    }
+
+    if let Some((_, tail)) = s.split_once('の') {
+        if parse_jp_time(tail.trim()).is_some() {
+            return true;
+        }
+    }
+
+    if parse_jp_time(s).is_some() {
+        return true;
+    }
+
+    false
 }
 
 fn parse_japanese(s: &str, today: NaiveDate) -> Option<(Option<NaiveDate>, NaiveTime)> {
@@ -321,6 +365,25 @@ mod tests {
         assert!(parse_date("11am").is_none());
         assert!(parse_date("3 pm").is_none());
         assert!(parse_date("11 am").is_none());
+    }
+
+    #[test]
+    fn test_parse_all_day_date_accepts_date_only_inputs() {
+        let today = Local::now().date_naive();
+        assert_eq!(
+            parse_all_day_date("2026-03-20"),
+            Some(NaiveDate::from_ymd_opt(2026, 3, 20).unwrap())
+        );
+        assert_eq!(parse_all_day_date("today"), Some(today));
+        assert_eq!(parse_all_day_date("明日"), Some(today + Duration::days(1)));
+    }
+
+    #[test]
+    fn test_parse_all_day_date_rejects_time_components() {
+        assert!(parse_all_day_date("2026-03-20 14:00").is_none());
+        assert!(parse_all_day_date("today 3pm").is_none());
+        assert!(parse_all_day_date("明日の15:30").is_none());
+        assert!(parse_all_day_date("明日の午後3時").is_none());
     }
 
     // --- Japanese with HH:MM format ---

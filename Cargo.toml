@@ -21,6 +21,7 @@ clap = { version = "4", features = ["derive"] }
 clap_complete = "4"
 objc2 = "0.6"
 objc2-event-kit = { version = "0.3", features = [
+    "EKAlarm",
     "EKCalendar",
     "EKCalendarItem",
     "EKEvent",

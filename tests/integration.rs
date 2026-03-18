@@ -121,6 +121,49 @@ fn test_add_end_before_start() {
     );
 }
 
+#[test]
+fn test_add_invalid_repeat_value() {
+    let (_, stderr, code) = calx(&[
+        "add",
+        "--title",
+        "Bad",
+        "--start",
+        "2026-03-20 10:00",
+        "--end",
+        "2026-03-20 11:00",
+        "--repeat",
+        "foo",
+    ]);
+    assert_eq!(code, 4);
+    assert!(
+        stderr.contains("Unknown repeat frequency"),
+        "Should reject invalid repeat value before calendar access: {stderr}"
+    );
+    assert!(
+        !stderr.contains("EventKit"),
+        "Invalid repeat should be reported as argument error: {stderr}"
+    );
+}
+
+#[test]
+fn test_add_all_day_rejects_time_input() {
+    let (_, stderr, code) = calx(&[
+        "add",
+        "--title",
+        "All Day",
+        "--all-day",
+        "--start",
+        "2026-03-20 10:00",
+        "--end",
+        "2026-03-20",
+    ]);
+    assert_eq!(code, 4);
+    assert!(
+        stderr.contains("Invalid date"),
+        "all-day add should reject time input: {stderr}"
+    );
+}
+
 // -----------------------------------------------------------
 // Verbose and fields flags
 // -----------------------------------------------------------
@@ -135,6 +178,18 @@ fn test_verbose_flag_accepted() {
 #[test]
 fn test_fields_flag_accepted() {
     let (_, stderr, _) = calx(&["today", "--fields", "title,start"]);
+    assert!(!stderr.contains("unexpected argument"));
+}
+
+#[test]
+fn test_search_calendar_flag_accepted() {
+    let (_, stderr, _) = calx(&["search", "test", "--calendar", "Work"]);
+    assert!(!stderr.contains("unexpected argument"));
+}
+
+#[test]
+fn test_search_exact_flag_accepted() {
+    let (_, stderr, _) = calx(&["search", "test", "--exact"]);
     assert!(!stderr.contains("unexpected argument"));
 }
 
@@ -162,6 +217,77 @@ fn test_search_invalid_to_date() {
     );
 }
 
+#[test]
+fn test_events_reversed_date_range() {
+    let (_, stderr, code) = calx(&["events", "--from", "2026-03-25", "--to", "2026-03-18"]);
+    assert_ne!(code, 0);
+    assert!(
+        stderr.contains("to date must be on or after from date"),
+        "events should reject reversed date range: {stderr}"
+    );
+}
+
+#[test]
+fn test_search_reversed_date_range() {
+    let (_, stderr, code) = calx(&[
+        "search",
+        "test",
+        "--from",
+        "2026-03-25",
+        "--to",
+        "2026-03-18",
+    ]);
+    assert_ne!(code, 0);
+    assert!(
+        stderr.contains("to date must be on or after from date"),
+        "search should reject reversed date range: {stderr}"
+    );
+}
+
+#[test]
+fn test_update_invalid_start_date() {
+    let (_, stderr, code) = calx(&["update", "fake-id", "--start", "notadate"]);
+    assert_ne!(code, 0);
+    assert!(
+        stderr.contains("Invalid date"),
+        "update should reject invalid --start before calendar access: {stderr}"
+    );
+}
+
+#[test]
+fn test_update_end_before_start() {
+    let (_, stderr, code) = calx(&[
+        "update",
+        "fake-id",
+        "--start",
+        "2026-03-20 15:00",
+        "--end",
+        "2026-03-20 14:00",
+    ]);
+    assert_ne!(code, 0);
+    assert!(
+        stderr.contains("end time must be after start"),
+        "update should reject end < start before calendar access: {stderr}"
+    );
+}
+
+#[test]
+fn test_update_all_day_rejects_time_input() {
+    let (_, stderr, code) = calx(&[
+        "update",
+        "fake-id",
+        "--all-day",
+        "true",
+        "--start",
+        "2026-03-20 10:00",
+    ]);
+    assert_eq!(code, 4);
+    assert!(
+        stderr.contains("Invalid date"),
+        "update --all-day should reject time input before calendar access: {stderr}"
+    );
+}
+
 // -----------------------------------------------------------
 // show --no-color
 // -----------------------------------------------------------
@@ -171,6 +297,64 @@ fn test_show_no_color_flag_accepted() {
     let (_, stderr, _) = calx(&["show", "--no-color", "fake-id"]);
     // Should not fail due to flag parsing (will fail on event not found, which is fine)
     assert!(!stderr.contains("unexpected argument"));
+}
+
+#[test]
+fn test_show_query_exact_flag_accepted() {
+    let (_, stderr, _) = calx(&["show", "--query", "test", "--exact"]);
+    assert!(!stderr.contains("unexpected argument"));
+}
+
+#[test]
+fn test_update_scope_flag_accepted() {
+    let (_, stderr, _) = calx(&["update", "fake-id", "--scope", "future"]);
+    assert!(!stderr.contains("unexpected argument"));
+}
+
+#[test]
+fn test_delete_scope_flag_accepted() {
+    let (_, stderr, _) = calx(&["delete", "fake-id", "--scope", "this"]);
+    assert!(!stderr.contains("unexpected argument"));
+}
+
+#[test]
+fn test_show_query_flags_accepted() {
+    let (_, stderr, _) = calx(&["show", "--query", "Test", "--in-calendar", "Work"]);
+    assert!(!stderr.contains("unexpected argument"));
+}
+
+#[test]
+fn test_update_query_flags_accepted() {
+    let (_, stderr, _) = calx(&[
+        "update",
+        "--query",
+        "Test",
+        "--in-calendar",
+        "Work",
+        "--title",
+        "Renamed",
+    ]);
+    assert!(!stderr.contains("unexpected argument"));
+}
+
+#[test]
+fn test_delete_query_flags_accepted() {
+    let (_, stderr, _) = calx(&[
+        "delete",
+        "--query",
+        "Test",
+        "--in-calendar",
+        "Work",
+        "--dry-run",
+    ]);
+    assert!(!stderr.contains("unexpected argument"));
+}
+
+#[test]
+fn test_show_query_invalid_from_date() {
+    let (_, stderr, code) = calx(&["show", "--query", "Test", "--from", "notadate"]);
+    assert_ne!(code, 0);
+    assert!(stderr.contains("Invalid date"));
 }
 
 // -----------------------------------------------------------
@@ -309,6 +493,8 @@ fn test_add_help() {
 fn test_update_help() {
     let (stdout, _, code) = calx(&["update", "--help"]);
     assert_eq!(code, 0);
+    assert!(stdout.contains("--query"));
+    assert!(stdout.contains("--in-calendar"));
     assert!(stdout.contains("--title"));
     assert!(stdout.contains("--start"));
     assert!(stdout.contains("--end"));
@@ -318,8 +504,25 @@ fn test_update_help() {
 fn test_search_help() {
     let (stdout, _, code) = calx(&["search", "--help"]);
     assert_eq!(code, 0);
+    assert!(stdout.contains("--calendar"));
     assert!(stdout.contains("--from"));
     assert!(stdout.contains("--to"));
+}
+
+#[test]
+fn test_delete_help() {
+    let (stdout, _, code) = calx(&["delete", "--help"]);
+    assert_eq!(code, 0);
+    assert!(stdout.contains("--query"));
+    assert!(stdout.contains("--in-calendar"));
+}
+
+#[test]
+fn test_show_help() {
+    let (stdout, _, code) = calx(&["show", "--help"]);
+    assert_eq!(code, 0);
+    assert!(stdout.contains("--query"));
+    assert!(stdout.contains("--in-calendar"));
 }
 
 #[test]

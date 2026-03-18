@@ -3,7 +3,7 @@ use crate::dateparse;
 use crate::error::AppError;
 use crate::output::print_output;
 use crate::store::{CalendarStore, EventInfo};
-use chrono::{Duration, Local};
+use chrono::{Duration, Local, NaiveDate};
 use unicode_width::UnicodeWidthStr;
 
 const TIME_W: usize = 15;
@@ -26,6 +26,7 @@ pub fn run(
         Some(s) => dateparse::parse_date(&s).ok_or(AppError::InvalidDate(s))?,
         None => from_date + Duration::days(7),
     };
+    validate_date_range(from_date, to_date)?;
 
     let events = store.events(from_date, to_date, calendar.as_deref())?;
     print_events(events, format, opts);
@@ -58,14 +59,14 @@ pub struct DisplayOpts<'a> {
 pub fn validate_opts(opts: &DisplayOpts) -> Result<(), AppError> {
     if let Some(after) = opts.after {
         if parse_hhmm(after).is_none() {
-            return Err(AppError::InvalidDate(format!(
+            return Err(AppError::InvalidArgument(format!(
                 "{after} (--after expects HH:MM)"
             )));
         }
     }
     if let Some(before) = opts.before {
         if parse_hhmm(before).is_none() {
-            return Err(AppError::InvalidDate(format!(
+            return Err(AppError::InvalidArgument(format!(
                 "{before} (--before expects HH:MM)"
             )));
         }
@@ -74,11 +75,20 @@ pub fn validate_opts(opts: &DisplayOpts) -> Result<(), AppError> {
         match sort_key {
             "date" | "start" | "title" | "calendar" | "duration" => {}
             _ => {
-                return Err(AppError::InvalidDate(format!(
-                    "Unknown sort key: {sort_key}. Use date, title, calendar, or duration."
+                return Err(AppError::InvalidArgument(format!(
+                    "Unknown sort key: {sort_key}. Use date, start, title, calendar, or duration."
                 )));
             }
         }
+    }
+    Ok(())
+}
+
+pub fn validate_date_range(from: NaiveDate, to: NaiveDate) -> Result<(), AppError> {
+    if to < from {
+        return Err(AppError::InvalidDate(
+            "to date must be on or after from date".to_string(),
+        ));
     }
     Ok(())
 }
@@ -182,7 +192,7 @@ pub fn print_events(events: Vec<EventInfo>, format: OutputFormat, opts: &Display
 
             let is_past = ev.end < now;
             let is_now = ev.start <= now && ev.end > now;
-            let duration = format_duration(ev.end.signed_duration_since(ev.start));
+            let duration = format_event_duration(ev);
             let title_p = pad_right(&ev.title, title_w);
             let cal_p = pad_right(&ev.calendar, cal_w);
 
@@ -281,6 +291,16 @@ pub(crate) fn format_duration(d: chrono::Duration) -> String {
     }
 }
 
+fn format_event_duration(event: &EventInfo) -> String {
+    if event.all_day {
+        let days = (event.end.date_naive() - event.start.date_naive())
+            .num_days()
+            .max(1);
+        return format!("{days}d");
+    }
+    format_duration(event.end.signed_duration_since(event.start))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -305,6 +325,8 @@ mod tests {
             organizer: None,
             created: None,
             modified: None,
+            recurring: false,
+            recurrence: None,
         }
     }
 

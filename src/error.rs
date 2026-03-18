@@ -14,6 +14,8 @@ pub enum AppError {
     EventNotFound(String),
     #[error("Invalid date: {0}. Use YYYY-MM-DD, YYYY-MM-DD HH:MM, or natural language")]
     InvalidDate(String),
+    #[error("Invalid argument: {0}")]
+    InvalidArgument(String),
     #[error("EventKit: {0}")]
     EventKit(String),
 }
@@ -23,7 +25,7 @@ impl AppError {
         match self {
             AppError::AccessDenied | AppError::AccessRejected | AppError::AccessTimeout => 2,
             AppError::CalendarNotFound(_) | AppError::EventNotFound(_) => 3,
-            AppError::InvalidDate(_) => 4,
+            AppError::InvalidDate(_) | AppError::InvalidArgument(_) => 4,
             AppError::EventKit(_) => 5,
         }
     }
