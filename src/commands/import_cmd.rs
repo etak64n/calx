@@ -87,13 +87,7 @@ fn import_single_event(
     }
 
     let start_prop = get_prop(event, "DTSTART");
-    let end_prop = get_prop(event, "DTEND");
-
     let (start_val, start_tzid) = match &start_prop {
-        Some(p) => (p.value.clone().unwrap_or_default(), get_param(p, "TZID")),
-        None => return Ok(None),
-    };
-    let (end_val, end_tzid) = match &end_prop {
         Some(p) => (p.value.clone().unwrap_or_default(), get_param(p, "TZID")),
         None => return Ok(None),
     };
@@ -103,17 +97,33 @@ fn import_single_event(
         .is_some_and(|p| get_param(p, "VALUE").as_deref() == Some("DATE"));
 
     let s_tz = resolve_tzid(start_tzid.as_deref(), tz_map);
-    let e_tz = resolve_tzid(end_tzid.as_deref(), tz_map);
-
     let start_dt = parse_ics_datetime_with_tz(&start_val, s_tz.as_deref())
         .ok_or_else(|| AppError::InvalidDate(start_val.clone()))?;
-    let end_dt = parse_ics_datetime_with_tz(&end_val, e_tz.as_deref())
-        .ok_or_else(|| AppError::InvalidDate(end_val.clone()))?;
+
+    // End time: DTEND, or DTSTART + DURATION, or DTSTART + 1h default
+    let end_dt = if let Some(end_prop) = get_prop(event, "DTEND") {
+        let end_val = end_prop.value.clone().unwrap_or_default();
+        let end_tzid = get_param(end_prop, "TZID");
+        let e_tz = resolve_tzid(end_tzid.as_deref(), tz_map);
+        parse_ics_datetime_with_tz(&end_val, e_tz.as_deref())
+            .ok_or(AppError::InvalidDate(end_val))?
+    } else if let Some(dur_str) = get_prop_value(event, "DURATION") {
+        let dur = parse_ics_duration(&dur_str).unwrap_or(chrono::Duration::hours(1));
+        start_dt + dur
+    } else if is_all_day {
+        // All-day with no DTEND: same day
+        start_dt + chrono::Duration::days(1)
+    } else {
+        // No DTEND, no DURATION: default 1 hour
+        start_dt + chrono::Duration::hours(1)
+    };
 
     let notes = get_prop_value(event, "DESCRIPTION");
     let notes_unescaped = notes.as_deref().map(ics_unescape);
-
     let title_unescaped = ics_unescape(&title);
+
+    // Parse RRULE for recurrence
+    let (repeat, repeat_count) = parse_rrule(event);
 
     store.add_event(
         &title_unescaped,
@@ -124,11 +134,81 @@ fn import_single_event(
         None,
         notes_unescaped.as_deref(),
         is_all_day,
-        None,
-        None,
+        repeat.as_deref(),
+        repeat_count,
     )?;
 
     Ok(Some(1))
+}
+
+/// Parse RRULE property into (frequency, count).
+fn parse_rrule(event: &IcalEvent) -> (Option<String>, Option<u32>) {
+    let rrule_val = match get_prop_value(event, "RRULE") {
+        Some(v) => v,
+        None => return (None, None),
+    };
+
+    let mut freq = None;
+    let mut count = None;
+
+    for part in rrule_val.split(';') {
+        if let Some(f) = part.strip_prefix("FREQ=") {
+            freq = Some(f.to_lowercase());
+        } else if let Some(c) = part.strip_prefix("COUNT=") {
+            count = c.parse().ok();
+        }
+    }
+
+    (freq, count)
+}
+
+/// Parse ICS DURATION value (e.g. "PT1H", "PT30M", "P1D", "PT1H30M").
+fn parse_ics_duration(s: &str) -> Option<chrono::Duration> {
+    let s = s.trim();
+    let s = s.strip_prefix('P')?;
+
+    let mut total_mins: i64 = 0;
+
+    // Handle date part (days)
+    if let Some((days_str, rest)) = s.split_once('D') {
+        let days: i64 = days_str.parse().ok()?;
+        total_mins += days * 24 * 60;
+        // Rest may have time part after 'T'
+        if let Some(time_part) = rest.strip_prefix('T') {
+            total_mins += parse_ics_time_duration(time_part)?;
+        }
+    } else if let Some(time_part) = s.strip_prefix('T') {
+        total_mins += parse_ics_time_duration(time_part)?;
+    } else {
+        // Could be weeks: "P1W"
+        if let Some(weeks_str) = s.strip_suffix('W') {
+            let weeks: i64 = weeks_str.parse().ok()?;
+            total_mins += weeks * 7 * 24 * 60;
+        }
+    }
+
+    Some(chrono::Duration::minutes(total_mins))
+}
+
+fn parse_ics_time_duration(s: &str) -> Option<i64> {
+    let mut total = 0i64;
+    let mut num_buf = String::new();
+
+    for c in s.chars() {
+        if c.is_ascii_digit() {
+            num_buf.push(c);
+        } else {
+            let n: i64 = num_buf.parse().ok()?;
+            num_buf.clear();
+            match c {
+                'H' => total += n * 60,
+                'M' => total += n,
+                'S' => {} // ignore seconds
+                _ => return None,
+            }
+        }
+    }
+    Some(total)
 }
 
 fn get_prop<'a>(event: &'a IcalEvent, name: &str) -> Option<&'a Property> {
@@ -268,9 +348,14 @@ pub(crate) fn parse_ics_datetime_with_tz(s: &str, tzid: Option<&str>) -> Option<
         Some(utc.with_timezone(&chrono::Local).naive_local())
     } else if let Some(tz_name) = tzid {
         let naive = NaiveDateTime::parse_from_str(s, "%Y%m%dT%H%M%S").ok()?;
-        let tz: chrono_tz::Tz = tz_name.parse().ok()?;
-        let dt = tz.from_local_datetime(&naive).earliest()?;
-        Some(dt.with_timezone(&chrono::Local).naive_local())
+        // Try chrono-tz; if unknown TZID, fall back to treating as local time
+        if let Ok(tz) = tz_name.parse::<chrono_tz::Tz>() {
+            let dt = tz.from_local_datetime(&naive).earliest()?;
+            Some(dt.with_timezone(&chrono::Local).naive_local())
+        } else {
+            // Unknown TZID: treat as local time (best effort)
+            Some(naive)
+        }
     } else {
         NaiveDateTime::parse_from_str(s, "%Y%m%dT%H%M%S")
             .or_else(|_| {
@@ -440,8 +525,11 @@ mod tests {
     }
 
     #[test]
-    fn test_ics_datetime_tzid_unknown_returns_none() {
-        assert!(parse_ics_datetime_with_tz("20260320T090000", Some("Fake/Zone")).is_none());
+    fn test_ics_datetime_tzid_unknown_falls_back_to_local() {
+        // Unknown TZID should return the naive time as-is (local fallback)
+        let dt = parse_ics_datetime_with_tz("20260320T090000", Some("Fake/Zone")).unwrap();
+        assert_eq!(dt.hour(), 9);
+        assert_eq!(dt.day(), 20);
     }
 
     // --- Text escaping ---
@@ -490,6 +578,82 @@ mod tests {
             resolve_tzid(Some("Eastern Standard Time"), &map).as_deref(),
             Some("America/New_York")
         );
+    }
+
+    // --- CSV datetime ---
+
+    // --- DURATION parsing ---
+
+    #[test]
+    fn test_parse_ics_duration_hours() {
+        let d = parse_ics_duration("PT1H").unwrap();
+        assert_eq!(d.num_minutes(), 60);
+    }
+
+    #[test]
+    fn test_parse_ics_duration_minutes() {
+        let d = parse_ics_duration("PT30M").unwrap();
+        assert_eq!(d.num_minutes(), 30);
+    }
+
+    #[test]
+    fn test_parse_ics_duration_hours_minutes() {
+        let d = parse_ics_duration("PT1H30M").unwrap();
+        assert_eq!(d.num_minutes(), 90);
+    }
+
+    #[test]
+    fn test_parse_ics_duration_days() {
+        let d = parse_ics_duration("P1D").unwrap();
+        assert_eq!(d.num_hours(), 24);
+    }
+
+    #[test]
+    fn test_parse_ics_duration_weeks() {
+        let d = parse_ics_duration("P1W").unwrap();
+        assert_eq!(d.num_days(), 7);
+    }
+
+    #[test]
+    fn test_parse_ics_duration_days_and_time() {
+        let d = parse_ics_duration("P1DT2H30M").unwrap();
+        assert_eq!(d.num_minutes(), 24 * 60 + 2 * 60 + 30);
+    }
+
+    // --- RRULE parsing ---
+
+    #[test]
+    fn test_parse_rrule_weekly() {
+        let mut event = IcalEvent::new();
+        event.properties.push(Property {
+            name: "RRULE".to_string(),
+            value: Some("FREQ=WEEKLY;COUNT=10".to_string()),
+            params: None,
+        });
+        let (freq, count) = parse_rrule(&event);
+        assert_eq!(freq.as_deref(), Some("weekly"));
+        assert_eq!(count, Some(10));
+    }
+
+    #[test]
+    fn test_parse_rrule_daily_no_count() {
+        let mut event = IcalEvent::new();
+        event.properties.push(Property {
+            name: "RRULE".to_string(),
+            value: Some("FREQ=DAILY".to_string()),
+            params: None,
+        });
+        let (freq, count) = parse_rrule(&event);
+        assert_eq!(freq.as_deref(), Some("daily"));
+        assert_eq!(count, None);
+    }
+
+    #[test]
+    fn test_parse_rrule_none() {
+        let event = IcalEvent::new();
+        let (freq, count) = parse_rrule(&event);
+        assert!(freq.is_none());
+        assert!(count.is_none());
     }
 
     // --- CSV datetime ---
