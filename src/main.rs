@@ -20,6 +20,15 @@ fn main() {
         return;
     }
 
+    if matches!(cli.command, Commands::Doctor) {
+        let result = commands::doctor::run(cli.output, cli.no_color);
+        if let Err(e) = result {
+            print_error(&cli, &e);
+            std::process::exit(e.exit_code());
+        }
+        return;
+    }
+
     // Pre-validate inputs before requesting calendar access
     if let Err(e) = pre_validate(&cli) {
         print_error(&cli, &e);
@@ -266,6 +275,7 @@ fn main() {
         Commands::Next { ref calendar } => {
             commands::next::run(&store, calendar.clone(), cli.output, &base_opts)
         }
+        Commands::Doctor => unreachable!(),
         Commands::Completions { .. } => unreachable!(),
     };
 

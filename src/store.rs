@@ -573,6 +573,24 @@ impl CalendarStore {
         Ok(slots)
     }
 
+    pub fn default_calendar_name(&self) -> Option<String> {
+        unsafe { self.store.defaultCalendarForNewEvents() }
+            .map(|cal| unsafe { cal.title() }.to_string())
+    }
+
+    pub fn is_calendar_writable(&self, name: &str) -> bool {
+        let cals = unsafe { self.store.calendarsForEntityType(EKEntityType::Event) };
+        let count = cals.count();
+        for i in 0..count {
+            let cal = cals.objectAtIndex(i);
+            let title = unsafe { cal.title() }.to_string();
+            if title == name {
+                return unsafe { cal.allowsContentModifications() };
+            }
+        }
+        false
+    }
+
     fn find_calendar(&self, name: &str) -> Result<Retained<EKCalendar>, AppError> {
         let cals = unsafe { self.store.calendarsForEntityType(EKEntityType::Event) };
         let count = cals.count();

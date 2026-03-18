@@ -355,6 +355,9 @@ pub enum Commands {
         calendar: Option<String>,
     },
 
+    /// Diagnose calendar access, permissions, and configuration
+    Doctor,
+
     /// Generate shell completion script
     Completions {
         /// Target shell: bash, zsh, fish
