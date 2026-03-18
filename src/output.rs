@@ -159,7 +159,7 @@ fn print_table<T: Serialize>(data: &T) {
 }
 
 /// Escape text per RFC 5545 section 3.3.11 (TEXT).
-fn ics_escape(s: &str) -> String {
+pub(crate) fn ics_escape(s: &str) -> String {
     s.replace('\\', "\\\\")
         .replace(';', "\\;")
         .replace(',', "\\,")
