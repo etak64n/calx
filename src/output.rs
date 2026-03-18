@@ -8,10 +8,14 @@ pub fn print_output<T: Serialize>(format: OutputFormat, data: &T, human_fn: impl
         OutputFormat::Human => human_fn(data),
         OutputFormat::Table => print_table(data),
         OutputFormat::Json => {
-            println!("{}", serde_json::to_string_pretty(data).unwrap());
+            if let Ok(s) = serde_json::to_string_pretty(data) {
+                println!("{s}");
+            }
         }
         OutputFormat::Yaml => {
-            print!("{}", serde_yml::to_string(data).unwrap());
+            if let Ok(s) = serde_yml::to_string(data) {
+                print!("{s}");
+            }
         }
         OutputFormat::Csv => print_delimited(data, b','),
         OutputFormat::Tsv => print_delimited(data, b'\t'),
@@ -21,8 +25,8 @@ pub fn print_output<T: Serialize>(format: OutputFormat, data: &T, human_fn: impl
                 serde_json::to_value(data).unwrap_or_default(),
             ) {
                 print_ics(&events);
-            } else {
-                println!("{}", serde_json::to_string_pretty(data).unwrap());
+            } else if let Ok(s) = serde_json::to_string_pretty(data) {
+                println!("{s}");
             }
         }
     }

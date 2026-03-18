@@ -4,11 +4,12 @@ use crate::output::print_output;
 use crate::store::CalendarStore;
 use unicode_width::UnicodeWidthStr;
 
+use super::events::DisplayOpts;
+
 pub fn run(
     store: &CalendarStore,
     format: OutputFormat,
-    no_color: bool,
-    no_header: bool,
+    opts: &DisplayOpts,
 ) -> Result<(), AppError> {
     let calendars = store.calendars();
     print_output(format, &calendars, |cals| {
@@ -17,7 +18,7 @@ pub fn run(
             return;
         }
 
-        let (bold, dim, reset) = if !no_color {
+        let (bold, dim, reset) = if !opts.no_color {
             ("\x1b[1m", "\x1b[2m", "\x1b[0m")
         } else {
             ("", "", "")
@@ -30,7 +31,7 @@ pub fn run(
             .unwrap_or(5)
             .max(5);
 
-        if !no_header {
+        if !opts.no_header {
             let pad = title_w - 5; // "TITLE".len()
             println!("{dim}  TITLE{}{reset}  SOURCE", " ".repeat(pad));
         }

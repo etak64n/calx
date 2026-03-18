@@ -16,23 +16,15 @@ pub enum AppError {
     InvalidDate(String),
     #[error("EventKit: {0}")]
     EventKit(String),
-    #[allow(dead_code)]
-    #[error("Invalid argument: {0}")]
-    InvalidArgument(String),
-    #[allow(dead_code)]
-    #[error("I/O error: {0}")]
-    Io(String),
 }
 
 impl AppError {
-    /// Exit code for this error type.
     pub fn exit_code(&self) -> i32 {
         match self {
             AppError::AccessDenied | AppError::AccessRejected | AppError::AccessTimeout => 2,
             AppError::CalendarNotFound(_) | AppError::EventNotFound(_) => 3,
-            AppError::InvalidDate(_) | AppError::InvalidArgument(_) => 4,
+            AppError::InvalidDate(_) => 4,
             AppError::EventKit(_) => 5,
-            AppError::Io(_) => 6,
         }
     }
 }

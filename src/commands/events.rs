@@ -216,14 +216,10 @@ pub fn print_events(events: Vec<EventInfo>, format: OutputFormat, opts: &Display
 }
 
 fn parse_hhmm(s: &str) -> Option<chrono::NaiveTime> {
-    let parts: Vec<&str> = s.split(':').collect();
-    if parts.len() == 2 {
-        let h: u32 = parts[0].parse().ok()?;
-        let m: u32 = parts[1].parse().ok()?;
-        chrono::NaiveTime::from_hms_opt(h, m, 0)
-    } else {
-        None
-    }
+    let (h_str, m_str) = s.split_once(':')?;
+    let h: u32 = h_str.parse().ok()?;
+    let m: u32 = m_str.parse().ok()?;
+    chrono::NaiveTime::from_hms_opt(h, m, 0)
 }
 
 pub(crate) fn filter_fields(

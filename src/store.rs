@@ -378,7 +378,6 @@ impl CalendarStore {
     }
 
     #[allow(clippy::too_many_arguments)]
-    #[allow(clippy::too_many_arguments)]
     pub fn update_event(
         &self,
         event_id: &str,

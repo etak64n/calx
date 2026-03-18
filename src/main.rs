@@ -34,9 +34,7 @@ fn main() {
     };
 
     let result = match cli.command {
-        Commands::Calendars => {
-            commands::calendars::run(&store, cli.output, base_opts.no_color, base_opts.no_header)
-        }
+        Commands::Calendars => commands::calendars::run(&store, cli.output, &base_opts),
         Commands::Events {
             ref from,
             ref to,
@@ -185,7 +183,11 @@ fn print_error(cli: &Cli, error: &error::AppError) {
         cli::OutputFormat::Human => eprintln!("Error: {error}"),
         _ => {
             let err = serde_json::json!({ "error": error.to_string() });
-            eprintln!("{}", serde_json::to_string_pretty(&err).unwrap());
+            if let Ok(s) = serde_json::to_string_pretty(&err) {
+                eprintln!("{s}");
+            } else {
+                eprintln!("Error: {error}");
+            }
         }
     }
 }
