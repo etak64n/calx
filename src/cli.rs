@@ -234,12 +234,6 @@ pub enum Commands {
         calendar: Option<String>,
     },
 
-    /// Import events from an ICS or CSV file (use "-" for stdin)
-    Import {
-        /// Path to .ics or .csv file, or "-" for stdin
-        file: String,
-    },
-
     /// Generate shell completion script
     Completions {
         /// Target shell: bash, zsh, fish

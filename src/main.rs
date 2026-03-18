@@ -17,15 +17,6 @@ fn main() {
         return;
     }
 
-    if let Commands::Import { ref file } = cli.command {
-        let result = commands::import_cmd::run(file, cli.output);
-        if let Err(e) = result {
-            print_error(&cli, &e);
-            std::process::exit(1);
-        }
-        return;
-    }
-
     let store = match store::CalendarStore::new() {
         Ok(s) => s,
         Err(e) => {
@@ -179,7 +170,6 @@ fn main() {
         Commands::Next { ref calendar } => {
             commands::next::run(&store, calendar.clone(), cli.output, &base_opts)
         }
-        Commands::Import { .. } => unreachable!(),
         Commands::Completions { .. } => unreachable!(),
     };
 

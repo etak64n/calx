@@ -3,7 +3,6 @@ pub mod calendars;
 pub mod completions;
 pub mod delete;
 pub mod events;
-pub mod import_cmd;
 pub mod next;
 pub mod search;
 pub mod show;

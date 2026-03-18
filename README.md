@@ -106,7 +106,7 @@ calx today --no-color     # disable ANSI colors
 calx today --no-header    # suppress column headers
 ```
 
-## Export & Import
+## Export
 
 ```bash
 # Export to ICS
@@ -114,13 +114,6 @@ calx events --from 2026-03-01 --to 2026-03-31 -o ics > events.ics
 
 # Export to CSV
 calx events --calendar "Work" -o csv > work.csv
-
-# Import from ICS or CSV
-calx import events.ics
-calx import data.csv
-
-# Import from stdin
-cat events.ics | calx import -
 ```
 
 ## Shell Completions

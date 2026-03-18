@@ -117,34 +117,6 @@ fn test_fields_flag_accepted() {
 }
 
 // -----------------------------------------------------------
-// Import file validation
-// -----------------------------------------------------------
-
-#[test]
-fn test_import_nonexistent_file() {
-    let (_, stderr, code) = calx(&["import", "/nonexistent/file.ics"]);
-    assert_ne!(code, 0);
-    assert!(
-        stderr.contains("Failed to read file") || stderr.contains("error"),
-        "stderr: {stderr}"
-    );
-}
-
-#[test]
-fn test_import_unknown_format() {
-    // Create a temp file with wrong extension
-    let tmp = std::env::temp_dir().join("calx_test.xyz");
-    std::fs::write(&tmp, "hello").unwrap();
-    let (_, stderr, code) = calx(&["import", tmp.to_str().unwrap()]);
-    assert_ne!(code, 0);
-    assert!(
-        stderr.contains("Unknown file format") || stderr.contains("error"),
-        "stderr: {stderr}"
-    );
-    std::fs::remove_file(tmp).ok();
-}
-
-// -----------------------------------------------------------
 // --no-color and --no-header
 // -----------------------------------------------------------
 
@@ -203,7 +175,6 @@ fn test_help_lists_all_commands() {
         "show",
         "search",
         "next",
-        "import",
         "completions",
     ] {
         assert!(stdout.contains(cmd), "Help should list command: {cmd}");
@@ -267,13 +238,6 @@ fn test_search_help() {
     assert_eq!(code, 0);
     assert!(stdout.contains("--from"));
     assert!(stdout.contains("--to"));
-}
-
-#[test]
-fn test_import_help() {
-    let (stdout, _, code) = calx(&["import", "--help"]);
-    assert_eq!(code, 0);
-    assert!(stdout.contains("stdin"));
 }
 
 #[test]
