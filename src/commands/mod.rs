@@ -1,4 +1,5 @@
 pub mod add;
+pub mod agenda;
 pub mod calendars;
 pub mod completions;
 pub mod delete;

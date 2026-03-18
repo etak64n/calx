@@ -53,6 +53,9 @@ fn main() {
 
     let result = match cli.command {
         Commands::Calendars => commands::calendars::run(&store, cli.output, &base_opts),
+        Commands::Agenda { ref calendar } => {
+            commands::agenda::run(&store, calendar.clone(), cli.output, base_opts.no_color)
+        }
         Commands::Events {
             ref from,
             ref to,

@@ -64,6 +64,13 @@ pub enum Commands {
     /// List all calendars with their sources
     Calendars,
 
+    /// Human-friendly daily overview with time-relative info
+    Agenda {
+        /// Filter by calendar name
+        #[arg(long)]
+        calendar: Option<String>,
+    },
+
     /// Query events within a date range
     Events {
         /// Start date (YYYY-MM-DD or natural language). Defaults to today
