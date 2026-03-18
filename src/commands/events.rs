@@ -98,10 +98,20 @@ pub fn print_events(
             .max()
             .unwrap_or(8)
             .clamp(8, 30);
+        let dur_w = 8;
+        let notes_w = if verbose {
+            evts.iter()
+                .filter_map(|e| e.notes.as_ref())
+                .map(|n| UnicodeWidthStr::width(n.lines().next().unwrap_or("")))
+                .max()
+                .unwrap_or(5)
+                .clamp(5, 40)
+        } else {
+            0
+        };
 
         let mut current_date = String::new();
         let mut row = 1;
-        let notes_indent = " ".repeat(2 + 3 + 2 + TIME_W + 2);
 
         for ev in evts {
             let date_str = ev.start.format("%A, %B %-d, %Y").to_string();
@@ -111,10 +121,17 @@ pub fn print_events(
                 }
                 println!("{bold}{date_str}{reset}");
                 if tty {
-                    println!(
-                        "{dim}  {:>3}  {:<TIME_W$}  {:<title_w$}  {:<cal_w$}  DURATION{reset}",
-                        "#", "TIME", "TITLE", "CALENDAR",
-                    );
+                    if verbose {
+                        println!(
+                            "{dim}  {:>3}  {:<TIME_W$}  {:<title_w$}  {:<cal_w$}  {:<dur_w$}  {:<notes_w$}  ID{reset}",
+                            "#", "TIME", "TITLE", "CALENDAR", "DURATION", "NOTES",
+                        );
+                    } else {
+                        println!(
+                            "{dim}  {:>3}  {:<TIME_W$}  {:<title_w$}  {:<cal_w$}  DURATION{reset}",
+                            "#", "TIME", "TITLE", "CALENDAR",
+                        );
+                    }
                 }
                 current_date = date_str;
             }
@@ -125,58 +142,72 @@ pub fn print_events(
             let title_p = pad_right(&ev.title, title_w);
             let cal_p = pad_right(&ev.calendar, cal_w);
 
+            // Build the base columns
+            let time_str;
+            let time_p;
             if ev.all_day {
-                let time_str = if tty {
+                time_str = if tty {
                     "┄┄┄ all day ┄┄┄".to_string()
                 } else {
-                    pad_right("all day", TIME_W)
+                    "all day".to_string()
                 };
-                if is_past {
-                    println!("{dim}  {row:>3}  {time_str}  {title_p}  {cal_p}  {duration}{reset}");
-                } else {
-                    println!(
-                        "  {row:>3}  {cyan}{time_str}{reset}  {bold}{title_p}{reset}  {dim}{cal_p}{reset}  {dim}{duration}{reset}"
-                    );
-                }
+                time_p = pad_right(&time_str, TIME_W);
             } else {
-                let time_str = format!(
+                time_str = format!(
                     "{} {} {}",
                     ev.start.format("%H:%M"),
                     if tty { "\u{2013}" } else { "-" },
                     ev.end.format("%H:%M"),
                 );
-                let time_p = pad_right(&time_str, TIME_W);
-
-                if is_past {
-                    println!("{dim}  {row:>3}  {time_p}  {title_p}  {cal_p}  {duration}{reset}");
-                } else if is_now {
-                    println!(
-                        "  {row:>3}  {green}{bold}{time_p}{reset}  {bold}{title_p}{reset}  {dim}{cal_p}{reset}  {dim}{duration}{reset}"
-                    );
-                } else {
-                    println!(
-                        "  {row:>3}  {time_p}  {bold}{title_p}{reset}  {dim}{cal_p}{reset}  {dim}{duration}{reset}"
-                    );
-                }
+                time_p = pad_right(&time_str, TIME_W);
             }
 
-            // Notes: always show in verbose, first line only otherwise
-            if let Some(notes) = &ev.notes {
-                if verbose {
-                    for line in notes.lines() {
-                        println!("{notes_indent}{dim}{line}{reset}");
-                    }
-                } else {
+            // Build verbose suffix
+            let verbose_suffix = if verbose {
+                let notes_str = ev
+                    .notes
+                    .as_ref()
+                    .and_then(|n| n.lines().next())
+                    .unwrap_or("");
+                let notes_p = pad_right(notes_str, notes_w);
+                format!("  {notes_p}  {}", ev.id)
+            } else {
+                String::new()
+            };
+
+            let dur_p = if verbose {
+                pad_right(&duration, dur_w)
+            } else {
+                duration.clone()
+            };
+
+            if is_past {
+                println!(
+                    "{dim}  {row:>3}  {time_p}  {title_p}  {cal_p}  {dur_p}{verbose_suffix}{reset}"
+                );
+            } else if is_now {
+                println!(
+                    "  {row:>3}  {green}{bold}{time_p}{reset}  {bold}{title_p}{reset}  {dim}{cal_p}{reset}  {dim}{dur_p}{verbose_suffix}{reset}"
+                );
+            } else if ev.all_day {
+                println!(
+                    "  {row:>3}  {cyan}{time_p}{reset}  {bold}{title_p}{reset}  {dim}{cal_p}{reset}  {dim}{dur_p}{verbose_suffix}{reset}"
+                );
+            } else {
+                println!(
+                    "  {row:>3}  {time_p}  {bold}{title_p}{reset}  {dim}{cal_p}{reset}  {dim}{dur_p}{verbose_suffix}{reset}"
+                );
+            }
+
+            // Non-verbose: show first line of notes below
+            if !verbose {
+                if let Some(notes) = &ev.notes {
                     let first_line = notes.lines().next().unwrap_or("");
                     if !first_line.is_empty() {
-                        println!("{notes_indent}{dim}{first_line}{reset}");
+                        let indent = " ".repeat(2 + 3 + 2 + TIME_W + 2);
+                        println!("{indent}{dim}{first_line}{reset}");
                     }
                 }
-            }
-
-            // Verbose: show ID
-            if verbose {
-                println!("{notes_indent}{dim}ID: {}{reset}", ev.id);
             }
 
             row += 1;

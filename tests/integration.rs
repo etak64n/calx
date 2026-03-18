@@ -143,3 +143,127 @@ fn test_import_unknown_format() {
     );
     std::fs::remove_file(tmp).ok();
 }
+
+// -----------------------------------------------------------
+// Piped output: no ANSI codes
+// -----------------------------------------------------------
+
+#[test]
+fn test_piped_output_no_ansi() {
+    // When piped (not a TTY), stdout should contain no ANSI escape codes
+    let (stdout, _, _) = calx(&["today"]);
+    assert!(
+        !stdout.contains("\x1b["),
+        "Piped output should not contain ANSI codes"
+    );
+}
+
+#[test]
+fn test_piped_calendars_no_ansi() {
+    let (stdout, _, _) = calx(&["calendars"]);
+    assert!(
+        !stdout.contains("\x1b["),
+        "Piped calendars output should not contain ANSI codes"
+    );
+}
+
+// -----------------------------------------------------------
+// Help text completeness
+// -----------------------------------------------------------
+
+#[test]
+fn test_help_lists_all_commands() {
+    let (stdout, _, _) = calx(&["--help"]);
+    for cmd in &[
+        "calendars",
+        "events",
+        "today",
+        "upcoming",
+        "add",
+        "update",
+        "delete",
+        "show",
+        "search",
+        "next",
+        "import",
+        "completions",
+    ] {
+        assert!(
+            stdout.contains(cmd),
+            "Help should list command: {cmd}"
+        );
+    }
+}
+
+#[test]
+fn test_help_lists_all_output_formats() {
+    let (stdout, _, _) = calx(&["--help"]);
+    for fmt in &["human", "json", "yaml", "table", "csv", "tsv", "ics"] {
+        assert!(
+            stdout.contains(fmt),
+            "Help should list output format: {fmt}"
+        );
+    }
+}
+
+#[test]
+fn test_help_shows_examples() {
+    let (stdout, _, _) = calx(&["--help"]);
+    assert!(stdout.contains("Examples:"));
+}
+
+// -----------------------------------------------------------
+// Subcommand help validation
+// -----------------------------------------------------------
+
+#[test]
+fn test_events_help() {
+    let (stdout, _, code) = calx(&["events", "--help"]);
+    assert_eq!(code, 0);
+    assert!(stdout.contains("--from"));
+    assert!(stdout.contains("--to"));
+    assert!(stdout.contains("--calendar"));
+}
+
+#[test]
+fn test_add_help() {
+    let (stdout, _, code) = calx(&["add", "--help"]);
+    assert_eq!(code, 0);
+    assert!(stdout.contains("--title"));
+    assert!(stdout.contains("--start"));
+    assert!(stdout.contains("--end"));
+    assert!(stdout.contains("--calendar"));
+    assert!(stdout.contains("--notes"));
+    assert!(stdout.contains("--all-day"));
+}
+
+#[test]
+fn test_update_help() {
+    let (stdout, _, code) = calx(&["update", "--help"]);
+    assert_eq!(code, 0);
+    assert!(stdout.contains("--title"));
+    assert!(stdout.contains("--start"));
+    assert!(stdout.contains("--end"));
+}
+
+#[test]
+fn test_search_help() {
+    let (stdout, _, code) = calx(&["search", "--help"]);
+    assert_eq!(code, 0);
+    assert!(stdout.contains("--from"));
+    assert!(stdout.contains("--to"));
+}
+
+#[test]
+fn test_import_help() {
+    let (stdout, _, code) = calx(&["import", "--help"]);
+    assert_eq!(code, 0);
+    assert!(stdout.contains("stdin"));
+}
+
+#[test]
+fn test_next_help() {
+    let (stdout, _, code) = calx(&["next", "--help"]);
+    assert_eq!(code, 0);
+    assert!(stdout.contains("watch(1)") || stdout.contains("upcoming"));
+}
