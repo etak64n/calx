@@ -147,7 +147,9 @@ fn main() {
             ref event_id,
             dry_run,
         } => commands::delete::run(&store, event_id, dry_run, cli.output),
-        Commands::Show { ref event_id } => commands::show::run(&store, event_id, cli.output),
+        Commands::Show { ref event_id } => {
+            commands::show::run(&store, event_id, cli.output, base_opts.no_color)
+        }
         Commands::Search {
             ref query,
             ref from,

@@ -20,12 +20,14 @@ pub fn print_output<T: Serialize>(format: OutputFormat, data: &T, human_fn: impl
         OutputFormat::Csv => print_delimited(data, b','),
         OutputFormat::Tsv => print_delimited(data, b'\t'),
         OutputFormat::Ics => {
-            // ICS requires Vec<EventInfo>; for other types, fall back to JSON
-            if let Ok(events) = serde_json::from_value::<Vec<EventInfo>>(
-                serde_json::to_value(data).unwrap_or_default(),
-            ) {
+            let val = serde_json::to_value(data).unwrap_or_default();
+            // Try as Vec<EventInfo> first, then as single EventInfo
+            if let Ok(events) = serde_json::from_value::<Vec<EventInfo>>(val.clone()) {
                 print_ics(&events);
+            } else if let Ok(event) = serde_json::from_value::<EventInfo>(val) {
+                print_ics(&[event]);
             } else if let Ok(s) = serde_json::to_string_pretty(data) {
+                // Non-event data (e.g. calendars): fall back to JSON
                 println!("{s}");
             }
         }

@@ -88,7 +88,10 @@ fn parse_japanese(s: &str, today: NaiveDate) -> Option<(Option<NaiveDate>, Naive
 
     date.as_ref()?; // return None if date didn't match
 
-    let time = time_part.and_then(parse_jp_time).unwrap_or(default_time);
+    let time = match time_part {
+        Some(tp) => parse_jp_time(tp)?,
+        None => default_time,
+    };
 
     Some((date, time))
 }
@@ -187,7 +190,8 @@ fn parse_jp_time(s: &str) -> Option<NaiveTime> {
         return NaiveTime::from_hms_opt(h, m, 0);
     }
 
-    None
+    // Fallback: try HH:MM and 12h formats (e.g. 明日の15:30, 明日の3pm)
+    parse_time_str(s)
 }
 
 fn parse_jp_weekday(s: &str) -> Option<Weekday> {
@@ -285,6 +289,27 @@ mod tests {
     #[test]
     fn test_parse_date_invalid() {
         assert!(parse_date("nope").is_none());
+    }
+
+    // --- Japanese with HH:MM format ---
+
+    #[test]
+    fn test_jp_with_hhmm_time() {
+        let dt = parse_datetime("明日の15:30").unwrap();
+        assert_eq!(dt.hour(), 15);
+        assert_eq!(dt.minute(), 30);
+    }
+
+    #[test]
+    fn test_jp_with_12h_time() {
+        let dt = parse_datetime("明日の3pm").unwrap();
+        assert_eq!(dt.hour(), 15);
+    }
+
+    #[test]
+    fn test_jp_invalid_time_returns_none() {
+        // "の" is present but time part is not parseable
+        assert!(parse_datetime("明日のabc").is_none());
     }
 
     // --- English natural language ---

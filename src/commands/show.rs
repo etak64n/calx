@@ -2,12 +2,16 @@ use crate::cli::OutputFormat;
 use crate::error::AppError;
 use crate::output::print_output;
 use crate::store::CalendarStore;
-use std::io::IsTerminal;
 
-pub fn run(store: &CalendarStore, event_id: &str, format: OutputFormat) -> Result<(), AppError> {
+pub fn run(
+    store: &CalendarStore,
+    event_id: &str,
+    format: OutputFormat,
+    no_color: bool,
+) -> Result<(), AppError> {
     let event = store.get_event(event_id)?;
     print_output(format, &event, |ev| {
-        let (bold, dim, reset) = if std::io::stdout().is_terminal() {
+        let (bold, dim, reset) = if !no_color {
             ("\x1b[1m", "\x1b[2m", "\x1b[0m")
         } else {
             ("", "", "")

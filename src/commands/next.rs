@@ -16,10 +16,17 @@ pub fn run(
     let lookahead = today + Duration::days(30);
     let events = store.events(today, lookahead, calendar.as_deref())?;
 
+    // Find currently in-progress event (earliest start among active)
     let current = events
         .iter()
-        .find(|e| !e.all_day && e.start <= now && e.end > now);
-    let next = events.iter().find(|e| !e.all_day && e.start > now);
+        .filter(|e| !e.all_day && e.start <= now && e.end > now)
+        .min_by_key(|e| e.start);
+
+    // Find next future event (earliest start > now)
+    let next = events
+        .iter()
+        .filter(|e| !e.all_day && e.start > now)
+        .min_by_key(|e| e.start);
 
     let ev = current.or(next);
 
