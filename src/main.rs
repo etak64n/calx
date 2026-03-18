@@ -7,7 +7,8 @@ mod store;
 
 use clap::Parser;
 use cli::{Cli, Commands};
-use commands::events::DisplayOpts;
+use commands::events::{DisplayOpts, validate_opts};
+use error::AppError;
 
 fn main() {
     let cli = Cli::parse();
@@ -15,6 +16,12 @@ fn main() {
     if let Commands::Completions { shell } = cli.command {
         commands::completions::run(shell);
         return;
+    }
+
+    // Pre-validate inputs before requesting calendar access
+    if let Err(e) = pre_validate(&cli) {
+        print_error(&cli, &e);
+        std::process::exit(e.exit_code());
     }
 
     let store = match store::CalendarStore::new() {
@@ -180,7 +187,86 @@ fn main() {
     }
 }
 
-fn print_error(cli: &Cli, error: &error::AppError) {
+/// Validate inputs that don't require calendar access.
+/// This runs before CalendarStore::new() so validation errors
+/// are reported even when calendar permission is denied.
+fn pre_validate(cli: &Cli) -> Result<(), AppError> {
+    fn validate_filter_opts(
+        sort: Option<&str>,
+        after: Option<&str>,
+        before: Option<&str>,
+    ) -> Result<(), AppError> {
+        validate_opts(&DisplayOpts {
+            sort,
+            after,
+            before,
+            ..Default::default()
+        })
+    }
+
+    fn validate_date_opt(s: &Option<String>) -> Result<(), AppError> {
+        if let Some(s) = s {
+            dateparse::parse_date(s).ok_or(AppError::InvalidDate(s.clone()))?;
+        }
+        Ok(())
+    }
+
+    match &cli.command {
+        Commands::Events {
+            from,
+            to,
+            sort,
+            after,
+            before,
+            ..
+        } => {
+            validate_filter_opts(sort.as_deref(), after.as_deref(), before.as_deref())?;
+            validate_date_opt(from)?;
+            validate_date_opt(to)?;
+        }
+        Commands::Today {
+            sort,
+            after,
+            before,
+            ..
+        }
+        | Commands::Upcoming {
+            sort,
+            after,
+            before,
+            ..
+        } => {
+            validate_filter_opts(sort.as_deref(), after.as_deref(), before.as_deref())?;
+        }
+        Commands::Search {
+            from,
+            to,
+            sort,
+            after,
+            before,
+            ..
+        } => {
+            validate_filter_opts(sort.as_deref(), after.as_deref(), before.as_deref())?;
+            validate_date_opt(from)?;
+            validate_date_opt(to)?;
+        }
+        Commands::Add { start, end, .. } => {
+            let s = dateparse::parse_datetime(start)
+                .ok_or_else(|| AppError::InvalidDate(start.clone()))?;
+            let e =
+                dateparse::parse_datetime(end).ok_or_else(|| AppError::InvalidDate(end.clone()))?;
+            if e < s {
+                return Err(AppError::InvalidDate(
+                    "end time must be after start time".to_string(),
+                ));
+            }
+        }
+        _ => {}
+    }
+    Ok(())
+}
+
+fn print_error(cli: &Cli, error: &AppError) {
     match cli.output {
         cli::OutputFormat::Human => eprintln!("Error: {error}"),
         _ => {

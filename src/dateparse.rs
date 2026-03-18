@@ -31,9 +31,25 @@ pub fn parse_date(s: &str) -> Option<NaiveDate> {
     }
 
     // Reject time-only input (would incorrectly resolve to today)
+    // Check both "3pm" and "3 pm" forms
     let s_lower = s.to_lowercase();
-    if parse_time_str(&s_lower).is_some() && !s_lower.contains(' ') {
-        return None;
+    let s_nospace = s_lower.replace(' ', "");
+    if parse_time_str(&s_nospace).is_some()
+        && !s_lower.starts_with("today")
+        && !s_lower.starts_with("tomorrow")
+        && !s_lower.starts_with("yesterday")
+        && !s_lower.starts_with("next ")
+        && !s_lower.starts_with("in ")
+    {
+        // If the entire input resolves to just a time, reject it
+        let has_date_keyword = s_lower.contains("today")
+            || s_lower.contains("tomorrow")
+            || s_lower.contains("yesterday")
+            || s_lower.contains("next")
+            || s_lower.contains("in ");
+        if !has_date_keyword {
+            return None;
+        }
     }
 
     let today = Local::now().date_naive();
@@ -303,6 +319,8 @@ mod tests {
         assert!(parse_date("15:30").is_none());
         assert!(parse_date("3pm").is_none());
         assert!(parse_date("11am").is_none());
+        assert!(parse_date("3 pm").is_none());
+        assert!(parse_date("11 am").is_none());
     }
 
     // --- Japanese with HH:MM format ---

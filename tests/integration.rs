@@ -100,6 +100,28 @@ fn test_add_missing_end() {
 }
 
 // -----------------------------------------------------------
+// Add: start > end validation
+// -----------------------------------------------------------
+
+#[test]
+fn test_add_end_before_start() {
+    let (_, stderr, code) = calx(&[
+        "add",
+        "--title",
+        "Bad",
+        "--start",
+        "2026-03-20 15:00",
+        "--end",
+        "2026-03-20 14:00",
+    ]);
+    assert_ne!(code, 0);
+    assert!(
+        stderr.contains("end time must be after start") || stderr.contains("error"),
+        "Should reject end < start: {stderr}"
+    );
+}
+
+// -----------------------------------------------------------
 // Verbose and fields flags
 // -----------------------------------------------------------
 
