@@ -8,17 +8,13 @@ use unicode_width::UnicodeWidthStr;
 
 const TIME_W: usize = 15;
 
-#[allow(clippy::too_many_arguments)]
 pub fn run(
     store: &CalendarStore,
     from: Option<String>,
     to: Option<String>,
     calendar: Option<String>,
     format: OutputFormat,
-    verbose: bool,
-    fields: Option<&str>,
-    no_color: bool,
-    no_header: bool,
+    opts: &DisplayOpts,
 ) -> Result<(), AppError> {
     let today = Local::now().date_naive();
     let from_date = match from {
@@ -31,7 +27,7 @@ pub fn run(
     };
 
     let events = store.events(from_date, to_date, calendar.as_deref())?;
-    print_events(events, format, verbose, fields, no_color, no_header);
+    print_events(events, format, opts);
     Ok(())
 }
 
@@ -45,17 +41,52 @@ fn pad_right(s: &str, width: usize) -> String {
 }
 
 #[allow(clippy::too_many_arguments)]
-pub fn print_events(
-    events: Vec<EventInfo>,
-    format: OutputFormat,
-    verbose: bool,
-    fields: Option<&str>,
-    no_color: bool,
-    no_header: bool,
-) {
+#[derive(Default)]
+pub struct DisplayOpts<'a> {
+    pub verbose: bool,
+    pub fields: Option<&'a str>,
+    pub no_color: bool,
+    pub no_header: bool,
+    pub sort: Option<&'a str>,
+    pub limit: Option<usize>,
+    pub after: Option<&'a str>,
+    pub before: Option<&'a str>,
+}
+
+pub fn print_events(events: Vec<EventInfo>, format: OutputFormat, opts: &DisplayOpts) {
+    // Apply time filters
+    let mut events = events;
+
+    if let Some(after) = opts.after {
+        if let Some(t) = parse_hhmm(after) {
+            events.retain(|e| e.start.time() >= t || e.all_day);
+        }
+    }
+    if let Some(before) = opts.before {
+        if let Some(t) = parse_hhmm(before) {
+            events.retain(|e| e.start.time() < t || e.all_day);
+        }
+    }
+
+    // Apply sort
+    if let Some(sort_key) = opts.sort {
+        match sort_key {
+            "date" | "start" => events.sort_by_key(|e| e.start),
+            "title" => events.sort_by(|a, b| a.title.cmp(&b.title)),
+            "calendar" => events.sort_by(|a, b| a.calendar.cmp(&b.calendar)),
+            "duration" => events.sort_by_key(|e| e.end.signed_duration_since(e.start)),
+            _ => {}
+        }
+    }
+
+    // Apply limit
+    if let Some(limit) = opts.limit {
+        events.truncate(limit);
+    }
+
     // For structured formats, filter fields if specified
-    if fields.is_some() && !matches!(format, OutputFormat::Human) {
-        let field_list: Vec<&str> = fields.unwrap().split(',').map(|s| s.trim()).collect();
+    if opts.fields.is_some() && !matches!(format, OutputFormat::Human) {
+        let field_list: Vec<&str> = opts.fields.unwrap().split(',').map(|s| s.trim()).collect();
         let filtered = filter_fields(&events, &field_list);
         print_output(format, &filtered, |_| {});
         return;
@@ -67,7 +98,7 @@ pub fn print_events(
             return;
         }
 
-        let color = !no_color;
+        let color = !opts.no_color;
         let (bold, dim, reset, green, cyan) = if color {
             ("\x1b[1m", "\x1b[2m", "\x1b[0m", "\x1b[32m", "\x1b[36m")
         } else {
@@ -89,6 +120,7 @@ pub fn print_events(
             .unwrap_or(8)
             .clamp(8, 30);
         let dur_w = 8;
+        let verbose = opts.verbose;
         let notes_w = if verbose {
             evts.iter()
                 .filter_map(|e| e.notes.as_ref())
@@ -103,7 +135,7 @@ pub fn print_events(
         let date_w = 10; // "YYYY-MM-DD"
         let mut row = 1;
 
-        if !no_header {
+        if !opts.no_header {
             if verbose {
                 println!(
                     "{dim}  {:>3}  {:<date_w$}  {:<TIME_W$}  {:<title_w$}  {:<cal_w$}  {:<dur_w$}  {:<notes_w$}  ID{reset}",
@@ -181,6 +213,17 @@ pub fn print_events(
             row += 1;
         }
     });
+}
+
+fn parse_hhmm(s: &str) -> Option<chrono::NaiveTime> {
+    let parts: Vec<&str> = s.split(':').collect();
+    if parts.len() == 2 {
+        let h: u32 = parts[0].parse().ok()?;
+        let m: u32 = parts[1].parse().ok()?;
+        chrono::NaiveTime::from_hms_opt(h, m, 0)
+    } else {
+        None
+    }
 }
 
 pub(crate) fn filter_fields(

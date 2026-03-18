@@ -7,6 +7,7 @@ mod store;
 
 use clap::Parser;
 use cli::{Cli, Commands};
+use commands::events::DisplayOpts;
 
 fn main() {
     let cli = Cli::parse();
@@ -16,7 +17,6 @@ fn main() {
         return;
     }
 
-    // Import validates input before requesting calendar access
     if let Commands::Import { ref file } = cli.command {
         let result = commands::import_cmd::run(file, cli.output);
         if let Err(e) = result {
@@ -34,13 +34,21 @@ fn main() {
         }
     };
 
-    let verbose = cli.verbose;
-    let fields = cli.fields.as_deref();
-    let no_color = cli.no_color;
-    let no_header = cli.no_header;
+    let opts = DisplayOpts {
+        verbose: cli.verbose,
+        fields: cli.fields.as_deref(),
+        no_color: cli.no_color,
+        no_header: cli.no_header,
+        sort: cli.sort.as_deref(),
+        limit: cli.limit,
+        after: cli.after.as_deref(),
+        before: cli.before.as_deref(),
+    };
 
     let result = match cli.command {
-        Commands::Calendars => commands::calendars::run(&store, cli.output, no_color, no_header),
+        Commands::Calendars => {
+            commands::calendars::run(&store, cli.output, opts.no_color, opts.no_header)
+        }
         Commands::Events {
             ref from,
             ref to,
@@ -51,30 +59,14 @@ fn main() {
             to.clone(),
             calendar.clone(),
             cli.output,
-            verbose,
-            fields,
-            no_color,
-            no_header,
+            &opts,
         ),
-        Commands::Today { ref calendar } => commands::today::run(
-            &store,
-            calendar.clone(),
-            cli.output,
-            verbose,
-            fields,
-            no_color,
-            no_header,
-        ),
-        Commands::Upcoming { days, ref calendar } => commands::upcoming::run(
-            &store,
-            days,
-            calendar.clone(),
-            cli.output,
-            verbose,
-            fields,
-            no_color,
-            no_header,
-        ),
+        Commands::Today { ref calendar } => {
+            commands::today::run(&store, calendar.clone(), cli.output, &opts)
+        }
+        Commands::Upcoming { days, ref calendar } => {
+            commands::upcoming::run(&store, days, calendar.clone(), cli.output, &opts)
+        }
         Commands::Add {
             ref title,
             ref start,
@@ -124,33 +116,15 @@ fn main() {
             cli.output,
         ),
         Commands::Delete { ref event_id } => commands::delete::run(&store, event_id, cli.output),
-        Commands::Show { ref event_id } => commands::show::run(
-            &store, event_id, cli.output, verbose, fields, no_color, no_header,
-        ),
+        Commands::Show { ref event_id } => commands::show::run(&store, event_id, cli.output, &opts),
         Commands::Search {
             ref query,
             ref from,
             ref to,
-        } => commands::search::run(
-            &store,
-            query,
-            from.clone(),
-            to.clone(),
-            cli.output,
-            verbose,
-            fields,
-            no_color,
-            no_header,
-        ),
-        Commands::Next { ref calendar } => commands::next::run(
-            &store,
-            calendar.clone(),
-            cli.output,
-            verbose,
-            fields,
-            no_color,
-            no_header,
-        ),
+        } => commands::search::run(&store, query, from.clone(), to.clone(), cli.output, &opts),
+        Commands::Next { ref calendar } => {
+            commands::next::run(&store, calendar.clone(), cli.output, &opts)
+        }
         Commands::Import { .. } => unreachable!(),
         Commands::Completions { .. } => unreachable!(),
     };

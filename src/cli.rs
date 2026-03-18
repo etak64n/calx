@@ -51,6 +51,22 @@ pub struct Cli {
     /// Disable color output
     #[arg(long, global = true)]
     pub no_color: bool,
+
+    /// Sort events by field (date, title, calendar, duration)
+    #[arg(long, global = true)]
+    pub sort: Option<String>,
+
+    /// Maximum number of events to display
+    #[arg(long, global = true)]
+    pub limit: Option<usize>,
+
+    /// Only show events after this time (HH:MM)
+    #[arg(long, global = true)]
+    pub after: Option<String>,
+
+    /// Only show events before this time (HH:MM)
+    #[arg(long, global = true)]
+    pub before: Option<String>,
 }
 
 #[derive(Subcommand)]
