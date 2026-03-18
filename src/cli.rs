@@ -6,6 +6,7 @@ pub enum OutputFormat {
     Human,
     Json,
     Yaml,
+    Table,
     Csv,
     Tsv,
     Ics,

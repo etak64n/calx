@@ -5,6 +5,7 @@ use serde::Serialize;
 pub fn print_output<T: Serialize>(format: OutputFormat, data: &T, human_fn: impl FnOnce(&T)) {
     match format {
         OutputFormat::Human => human_fn(data),
+        OutputFormat::Table => print_table(data),
         OutputFormat::Json => {
             println!("{}", serde_json::to_string_pretty(data).unwrap());
         }
@@ -72,6 +73,84 @@ fn print_ics(events: &[EventInfo]) {
         println!("END:VEVENT");
     }
     println!("END:VCALENDAR");
+}
+
+fn print_table<T: Serialize>(data: &T) {
+    let Ok(val) = serde_json::to_value(data) else {
+        return;
+    };
+
+    let items: Vec<&serde_json::Map<String, serde_json::Value>> = if let Some(arr) = val.as_array()
+    {
+        arr.iter().filter_map(|v| v.as_object()).collect()
+    } else if let Some(obj) = val.as_object() {
+        vec![obj]
+    } else {
+        return;
+    };
+
+    if items.is_empty() {
+        return;
+    }
+
+    let keys: Vec<&String> = items[0].keys().collect();
+
+    // Calculate column widths
+    let widths: Vec<usize> = keys
+        .iter()
+        .map(|k| {
+            let header_w = k.len();
+            let max_val_w = items
+                .iter()
+                .map(|obj| {
+                    value_to_string(obj.get(k.as_str()).unwrap_or(&serde_json::Value::Null)).len()
+                })
+                .max()
+                .unwrap_or(0);
+            header_w.max(max_val_w)
+        })
+        .collect();
+
+    // Top border
+    print!("┌");
+    for (i, w) in widths.iter().enumerate() {
+        print!("{}", "─".repeat(w + 2));
+        print!("{}", if i < widths.len() - 1 { "┬" } else { "┐" });
+    }
+    println!();
+
+    // Header
+    print!("│");
+    for (i, key) in keys.iter().enumerate() {
+        print!(" {:<width$} │", key.to_uppercase(), width = widths[i]);
+    }
+    println!();
+
+    // Separator
+    print!("├");
+    for (i, w) in widths.iter().enumerate() {
+        print!("{}", "─".repeat(w + 2));
+        print!("{}", if i < widths.len() - 1 { "┼" } else { "┤" });
+    }
+    println!();
+
+    // Rows
+    for obj in &items {
+        print!("│");
+        for (i, key) in keys.iter().enumerate() {
+            let val = value_to_string(obj.get(key.as_str()).unwrap_or(&serde_json::Value::Null));
+            print!(" {:<width$} │", val, width = widths[i]);
+        }
+        println!();
+    }
+
+    // Bottom border
+    print!("└");
+    for (i, w) in widths.iter().enumerate() {
+        print!("{}", "─".repeat(w + 2));
+        print!("{}", if i < widths.len() - 1 { "┴" } else { "┘" });
+    }
+    println!();
 }
 
 fn value_to_string(v: &serde_json::Value) -> String {
