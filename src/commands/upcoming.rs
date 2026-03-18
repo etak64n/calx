@@ -12,6 +12,7 @@ pub fn run(
     format: OutputFormat,
     opts: &DisplayOpts,
 ) -> Result<(), AppError> {
+    super::events::validate_opts(opts)?;
     let today = Local::now().date_naive();
     let end = today + Duration::days(days as i64);
     let events = store.events(today, end, calendar.as_deref())?;

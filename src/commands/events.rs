@@ -16,6 +16,7 @@ pub fn run(
     format: OutputFormat,
     opts: &DisplayOpts,
 ) -> Result<(), AppError> {
+    validate_opts(opts)?;
     let today = Local::now().date_naive();
     let from_date = match from {
         Some(s) => dateparse::parse_date(&s).ok_or(AppError::InvalidDate(s))?,
@@ -53,8 +54,36 @@ pub struct DisplayOpts<'a> {
     pub before: Option<&'a str>,
 }
 
+/// Validate DisplayOpts values. Call before print_events.
+pub fn validate_opts(opts: &DisplayOpts) -> Result<(), AppError> {
+    if let Some(after) = opts.after {
+        if parse_hhmm(after).is_none() {
+            return Err(AppError::InvalidDate(format!(
+                "{after} (--after expects HH:MM)"
+            )));
+        }
+    }
+    if let Some(before) = opts.before {
+        if parse_hhmm(before).is_none() {
+            return Err(AppError::InvalidDate(format!(
+                "{before} (--before expects HH:MM)"
+            )));
+        }
+    }
+    if let Some(sort_key) = opts.sort {
+        match sort_key {
+            "date" | "start" | "title" | "calendar" | "duration" => {}
+            _ => {
+                return Err(AppError::InvalidDate(format!(
+                    "Unknown sort key: {sort_key}. Use date, title, calendar, or duration."
+                )));
+            }
+        }
+    }
+    Ok(())
+}
+
 pub fn print_events(events: Vec<EventInfo>, format: OutputFormat, opts: &DisplayOpts) {
-    // Apply time filters
     let mut events = events;
 
     if let Some(after) = opts.after {
@@ -68,7 +97,6 @@ pub fn print_events(events: Vec<EventInfo>, format: OutputFormat, opts: &Display
         }
     }
 
-    // Apply sort
     if let Some(sort_key) = opts.sort {
         match sort_key {
             "date" | "start" => events.sort_by_key(|e| e.start),

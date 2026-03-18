@@ -152,6 +152,31 @@ fn test_show_no_color_flag_accepted() {
 }
 
 // -----------------------------------------------------------
+// Invalid --after/--before/--sort
+// -----------------------------------------------------------
+
+#[test]
+fn test_invalid_after_value() {
+    let (_, stderr, code) = calx(&["today", "--after", "nottime"]);
+    assert_ne!(code, 0);
+    assert!(stderr.contains("Invalid date") || stderr.contains("--after"));
+}
+
+#[test]
+fn test_invalid_before_value() {
+    let (_, stderr, code) = calx(&["today", "--before", "xyz"]);
+    assert_ne!(code, 0);
+    assert!(stderr.contains("Invalid date") || stderr.contains("--before"));
+}
+
+#[test]
+fn test_invalid_sort_value() {
+    let (_, stderr, code) = calx(&["today", "--sort", "nonsense"]);
+    assert_ne!(code, 0);
+    assert!(stderr.contains("Unknown sort key") || stderr.contains("error"));
+}
+
+// -----------------------------------------------------------
 // --no-color and --no-header
 // -----------------------------------------------------------
 

@@ -134,7 +134,6 @@ calx events --calendar "Work" -o csv > work.csv
 | 3 | Calendar or event not found |
 | 4 | Invalid date or argument |
 | 5 | EventKit error |
-| 6 | I/O error |
 
 ## Shell Completions
 

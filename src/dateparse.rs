@@ -22,11 +22,18 @@ pub fn parse_datetime(s: &str) -> Option<NaiveDateTime> {
 }
 
 /// Parse a date-only string with natural language support.
+/// Rejects time-only inputs like "15:30" or "3pm".
 pub fn parse_date(s: &str) -> Option<NaiveDate> {
     let s = s.trim();
 
     if let Ok(d) = NaiveDate::parse_from_str(s, "%Y-%m-%d") {
         return Some(d);
+    }
+
+    // Reject time-only input (would incorrectly resolve to today)
+    let s_lower = s.to_lowercase();
+    if parse_time_str(&s_lower).is_some() && !s_lower.contains(' ') {
+        return None;
     }
 
     let today = Local::now().date_naive();
@@ -289,6 +296,13 @@ mod tests {
     #[test]
     fn test_parse_date_invalid() {
         assert!(parse_date("nope").is_none());
+    }
+
+    #[test]
+    fn test_parse_date_rejects_time_only() {
+        assert!(parse_date("15:30").is_none());
+        assert!(parse_date("3pm").is_none());
+        assert!(parse_date("11am").is_none());
     }
 
     // --- Japanese with HH:MM format ---

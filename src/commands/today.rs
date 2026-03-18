@@ -11,6 +11,7 @@ pub fn run(
     format: OutputFormat,
     opts: &DisplayOpts,
 ) -> Result<(), AppError> {
+    super::events::validate_opts(opts)?;
     let today = Local::now().date_naive();
     let events = store.events(today, today, calendar.as_deref())?;
     super::events::print_events(events, format, opts);

@@ -14,6 +14,7 @@ pub fn run(
     format: OutputFormat,
     opts: &DisplayOpts,
 ) -> Result<(), AppError> {
+    super::events::validate_opts(opts)?;
     let today = Local::now().date_naive();
     let from_date = match from {
         Some(s) => dateparse::parse_date(&s).ok_or(AppError::InvalidDate(s))?,
