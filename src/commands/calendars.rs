@@ -33,7 +33,7 @@ pub fn run(
 
         if !opts.no_header {
             let pad = title_w - 5; // "TITLE".len()
-            println!("{dim}  TITLE{}{reset}  SOURCE", " ".repeat(pad));
+            println!("{dim}  TITLE{}  SOURCE{reset}", " ".repeat(pad));
         }
         for cal in cals {
             let pad = title_w - UnicodeWidthStr::width(cal.title.as_str());
