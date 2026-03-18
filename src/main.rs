@@ -102,7 +102,9 @@ fn main() {
             cli.output,
         ),
         Commands::Delete { ref event_id } => commands::delete::run(&store, event_id, cli.output),
-        Commands::Show { ref event_id } => commands::show::run(&store, event_id, cli.output),
+        Commands::Show { ref event_id } => commands::show::run(
+            &store, event_id, cli.output, verbose, fields, no_color, no_header,
+        ),
         Commands::Search {
             ref query,
             ref from,
@@ -118,9 +120,15 @@ fn main() {
             no_color,
             no_header,
         ),
-        Commands::Next { ref calendar } => {
-            commands::next::run(&store, calendar.clone(), cli.output)
-        }
+        Commands::Next { ref calendar } => commands::next::run(
+            &store,
+            calendar.clone(),
+            cli.output,
+            verbose,
+            fields,
+            no_color,
+            no_header,
+        ),
         Commands::Import { ref file } => commands::import_cmd::run(&store, file, cli.output),
         Commands::Completions { .. } => unreachable!(),
     };
