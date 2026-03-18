@@ -117,6 +117,41 @@ fn test_fields_flag_accepted() {
 }
 
 // -----------------------------------------------------------
+// search rejects invalid dates
+// -----------------------------------------------------------
+
+#[test]
+fn test_search_invalid_from_date() {
+    let (_, stderr, code) = calx(&["search", "test", "--from", "notadate"]);
+    assert_ne!(code, 0);
+    assert!(
+        stderr.contains("Invalid date") || stderr.contains("error"),
+        "search should reject invalid --from: {stderr}"
+    );
+}
+
+#[test]
+fn test_search_invalid_to_date() {
+    let (_, stderr, code) = calx(&["search", "test", "--to", "notadate"]);
+    assert_ne!(code, 0);
+    assert!(
+        stderr.contains("Invalid date") || stderr.contains("error"),
+        "search should reject invalid --to: {stderr}"
+    );
+}
+
+// -----------------------------------------------------------
+// show --no-color
+// -----------------------------------------------------------
+
+#[test]
+fn test_show_no_color_flag_accepted() {
+    let (_, stderr, _) = calx(&["show", "--no-color", "fake-id"]);
+    // Should not fail due to flag parsing (will fail on event not found, which is fine)
+    assert!(!stderr.contains("unexpected argument"));
+}
+
+// -----------------------------------------------------------
 // --no-color and --no-header
 // -----------------------------------------------------------
 

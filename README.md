@@ -97,7 +97,7 @@ calx events --from tomorrow --sort duration  # by duration
 
 ## Output Formats
 
-All commands support 7 output formats via `-o`:
+Event commands support 7 output formats via `-o` (ics only applies to event data):
 
 ```bash
 calx today                # human-readable (default)

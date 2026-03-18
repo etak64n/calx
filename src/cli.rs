@@ -32,7 +32,7 @@ pub struct Cli {
     #[command(subcommand)]
     pub command: Commands,
 
-    /// Output format
+    /// Output format (ics only works with event data; ignored by completions)
     #[arg(long, short, global = true, default_value = "human")]
     pub output: OutputFormat,
 
