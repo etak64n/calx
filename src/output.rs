@@ -1,6 +1,7 @@
 use crate::cli::OutputFormat;
 use crate::store::EventInfo;
 use serde::Serialize;
+use unicode_width::UnicodeWidthStr;
 
 pub fn print_output<T: Serialize>(format: OutputFormat, data: &T, human_fn: impl FnOnce(&T)) {
     match format {
@@ -95,15 +96,17 @@ fn print_table<T: Serialize>(data: &T) {
 
     let keys: Vec<&String> = items[0].keys().collect();
 
-    // Calculate column widths
+    // Calculate column widths using display width (CJK-aware)
     let widths: Vec<usize> = keys
         .iter()
         .map(|k| {
-            let header_w = k.len();
+            let header_w = UnicodeWidthStr::width(k.as_str());
             let max_val_w = items
                 .iter()
                 .map(|obj| {
-                    value_to_string(obj.get(k.as_str()).unwrap_or(&serde_json::Value::Null)).len()
+                    let s =
+                        value_to_string(obj.get(k.as_str()).unwrap_or(&serde_json::Value::Null));
+                    UnicodeWidthStr::width(s.as_str())
                 })
                 .max()
                 .unwrap_or(0);
@@ -122,7 +125,9 @@ fn print_table<T: Serialize>(data: &T) {
     // Header
     print!("│");
     for (i, key) in keys.iter().enumerate() {
-        print!(" {:<width$} │", key.to_uppercase(), width = widths[i]);
+        let label = key.to_uppercase();
+        let pad = widths[i] - UnicodeWidthStr::width(label.as_str());
+        print!(" {}{} │", label, " ".repeat(pad));
     }
     println!();
 
@@ -139,7 +144,8 @@ fn print_table<T: Serialize>(data: &T) {
         print!("│");
         for (i, key) in keys.iter().enumerate() {
             let val = value_to_string(obj.get(key.as_str()).unwrap_or(&serde_json::Value::Null));
-            print!(" {:<width$} │", val, width = widths[i]);
+            let pad = widths[i] - UnicodeWidthStr::width(val.as_str());
+            print!(" {}{} │", val, " ".repeat(pad));
         }
         println!();
     }
