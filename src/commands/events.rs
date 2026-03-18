@@ -195,17 +195,6 @@ pub fn print_events(
                 );
             }
 
-            // Non-verbose: show first line of notes below
-            if !verbose {
-                if let Some(notes) = &ev.notes {
-                    let first_line = notes.lines().next().unwrap_or("");
-                    if !first_line.is_empty() {
-                        let indent = " ".repeat(2 + 3 + 2 + TIME_W + 2);
-                        println!("{indent}{dim}{first_line}{reset}");
-                    }
-                }
-            }
-
             row += 1;
         }
     });
