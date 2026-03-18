@@ -21,8 +21,15 @@ pub struct EventInfo {
     pub start: DateTime<Local>,
     pub end: DateTime<Local>,
     pub calendar: String,
+    pub location: Option<String>,
+    pub url: Option<String>,
     pub notes: Option<String>,
     pub all_day: bool,
+    pub status: String,
+    pub availability: String,
+    pub organizer: Option<String>,
+    pub created: Option<DateTime<Local>>,
+    pub modified: Option<DateTime<Local>>,
 }
 
 pub struct CalendarStore {
@@ -124,11 +131,36 @@ impl CalendarStore {
 
             let start = nsdate_to_datetime(unsafe { event.startDate() });
             let end = nsdate_to_datetime(unsafe { event.endDate() });
+            let location = unsafe { event.location() }.map(|l| l.to_string());
+            let url =
+                unsafe { event.URL() }.and_then(|u| u.absoluteString().map(|s| s.to_string()));
             let notes = unsafe { event.notes() }.map(|n| n.to_string());
             let all_day = unsafe { event.isAllDay() };
             let id = unsafe { event.eventIdentifier() }
                 .map(|i| i.to_string())
                 .unwrap_or_default();
+            let status = match unsafe { event.status() } {
+                EKEventStatus::Confirmed => "confirmed",
+                EKEventStatus::Tentative => "tentative",
+                EKEventStatus::Canceled => "canceled",
+                _ => "none",
+            }
+            .to_string();
+            let availability = match unsafe { event.availability() } {
+                EKEventAvailability::Busy => "busy",
+                EKEventAvailability::Free => "free",
+                EKEventAvailability::Tentative => "tentative",
+                EKEventAvailability::Unavailable => "unavailable",
+                _ => "not supported",
+            }
+            .to_string();
+            let organizer = unsafe { event.organizer() }.map(|p| {
+                unsafe { p.name() }
+                    .map(|n| n.to_string())
+                    .unwrap_or_default()
+            });
+            let created = unsafe { event.creationDate() }.map(nsdate_to_datetime);
+            let modified = unsafe { event.lastModifiedDate() }.map(nsdate_to_datetime);
 
             result.push(EventInfo {
                 id,
@@ -136,8 +168,15 @@ impl CalendarStore {
                 start,
                 end,
                 calendar: cal_name,
+                location,
+                url,
                 notes,
                 all_day,
+                status,
+                availability,
+                organizer,
+                created,
+                modified,
             });
         }
 
@@ -217,11 +256,35 @@ impl CalendarStore {
             .unwrap_or_default();
         let start = nsdate_to_datetime(unsafe { event.startDate() });
         let end = nsdate_to_datetime(unsafe { event.endDate() });
+        let location = unsafe { event.location() }.map(|l| l.to_string());
+        let url = unsafe { event.URL() }.and_then(|u| u.absoluteString().map(|s| s.to_string()));
         let notes = unsafe { event.notes() }.map(|n| n.to_string());
         let all_day = unsafe { event.isAllDay() };
         let id = unsafe { event.eventIdentifier() }
             .map(|i| i.to_string())
             .unwrap_or_default();
+        let status = match unsafe { event.status() } {
+            EKEventStatus::Confirmed => "confirmed",
+            EKEventStatus::Tentative => "tentative",
+            EKEventStatus::Canceled => "canceled",
+            _ => "none",
+        }
+        .to_string();
+        let availability = match unsafe { event.availability() } {
+            EKEventAvailability::Busy => "busy",
+            EKEventAvailability::Free => "free",
+            EKEventAvailability::Tentative => "tentative",
+            EKEventAvailability::Unavailable => "unavailable",
+            _ => "not supported",
+        }
+        .to_string();
+        let organizer = unsafe { event.organizer() }.map(|p| {
+            unsafe { p.name() }
+                .map(|n| n.to_string())
+                .unwrap_or_default()
+        });
+        let created = unsafe { event.creationDate() }.map(nsdate_to_datetime);
+        let modified = unsafe { event.lastModifiedDate() }.map(nsdate_to_datetime);
 
         Ok(EventInfo {
             id,
@@ -229,8 +292,15 @@ impl CalendarStore {
             start,
             end,
             calendar,
+            location,
+            url,
             notes,
             all_day,
+            status,
+            availability,
+            organizer,
+            created,
+            modified,
         })
     }
 

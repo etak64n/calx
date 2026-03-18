@@ -240,8 +240,15 @@ mod tests {
             start,
             end,
             calendar: calendar.to_string(),
+            location: None,
+            url: None,
             notes: notes.map(|s| s.to_string()),
             all_day: false,
+            status: "confirmed".to_string(),
+            availability: "busy".to_string(),
+            organizer: None,
+            created: None,
+            modified: None,
         }
     }
 
