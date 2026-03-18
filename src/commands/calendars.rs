@@ -2,10 +2,14 @@ use crate::cli::OutputFormat;
 use crate::error::AppError;
 use crate::output::print_output;
 use crate::store::CalendarStore;
-use std::io::IsTerminal;
 use unicode_width::UnicodeWidthStr;
 
-pub fn run(store: &CalendarStore, format: OutputFormat) -> Result<(), AppError> {
+pub fn run(
+    store: &CalendarStore,
+    format: OutputFormat,
+    no_color: bool,
+    no_header: bool,
+) -> Result<(), AppError> {
     let calendars = store.calendars();
     print_output(format, &calendars, |cals| {
         if cals.is_empty() {
@@ -13,8 +17,7 @@ pub fn run(store: &CalendarStore, format: OutputFormat) -> Result<(), AppError> 
             return;
         }
 
-        let tty = std::io::stdout().is_terminal();
-        let (bold, dim, reset) = if tty {
+        let (bold, dim, reset) = if !no_color {
             ("\x1b[1m", "\x1b[2m", "\x1b[0m")
         } else {
             ("", "", "")
@@ -27,8 +30,9 @@ pub fn run(store: &CalendarStore, format: OutputFormat) -> Result<(), AppError> 
             .unwrap_or(5)
             .max(5);
 
-        if tty {
-            println!("{dim}  {:<title_w$}  SOURCE{reset}", "TITLE",);
+        if !no_header {
+            let pad = title_w - 5; // "TITLE".len()
+            println!("{dim}  TITLE{}{reset}  SOURCE", " ".repeat(pad));
         }
         for cal in cals {
             let pad = title_w - UnicodeWidthStr::width(cal.title.as_str());

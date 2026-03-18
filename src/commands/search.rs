@@ -4,6 +4,7 @@ use crate::error::AppError;
 use crate::store::CalendarStore;
 use chrono::{Duration, Local};
 
+#[allow(clippy::too_many_arguments)]
 pub fn run(
     store: &CalendarStore,
     query: &str,
@@ -12,6 +13,8 @@ pub fn run(
     format: OutputFormat,
     verbose: bool,
     fields: Option<&str>,
+    no_color: bool,
+    no_header: bool,
 ) -> Result<(), AppError> {
     let today = Local::now().date_naive();
     let from_date = from
@@ -22,6 +25,6 @@ pub fn run(
         .unwrap_or(from_date + Duration::days(90));
 
     let events = store.search_events(query, from_date, to_date)?;
-    super::events::print_events(events, format, verbose, fields);
+    super::events::print_events(events, format, verbose, fields, no_color, no_header);
     Ok(())
 }

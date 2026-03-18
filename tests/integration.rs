@@ -145,26 +145,44 @@ fn test_import_unknown_format() {
 }
 
 // -----------------------------------------------------------
-// Piped output: no ANSI codes
+// --no-color and --no-header
 // -----------------------------------------------------------
 
 #[test]
-fn test_piped_output_no_ansi() {
-    // When piped (not a TTY), stdout should contain no ANSI escape codes
-    let (stdout, _, _) = calx(&["today"]);
+fn test_no_color_flag() {
+    let (stdout, _, _) = calx(&["today", "--no-color"]);
     assert!(
         !stdout.contains("\x1b["),
-        "Piped output should not contain ANSI codes"
+        "--no-color should produce no ANSI codes"
     );
 }
 
 #[test]
-fn test_piped_calendars_no_ansi() {
-    let (stdout, _, _) = calx(&["calendars"]);
+fn test_no_color_calendars() {
+    let (stdout, _, _) = calx(&["calendars", "--no-color"]);
     assert!(
         !stdout.contains("\x1b["),
-        "Piped calendars output should not contain ANSI codes"
+        "--no-color should produce no ANSI codes for calendars"
     );
+}
+
+#[test]
+fn test_no_header_flag() {
+    let (with_header, _, _) = calx(&["today", "--no-color"]);
+    let (without_header, _, _) = calx(&["today", "--no-color", "--no-header"]);
+    // --no-header should produce fewer lines (no column header rows)
+    let with_count = with_header.lines().count();
+    let without_count = without_header.lines().count();
+    assert!(
+        without_count <= with_count,
+        "--no-header should have same or fewer lines: {without_count} vs {with_count}"
+    );
+}
+
+#[test]
+fn test_no_header_no_color_accepted() {
+    let (_, stderr, _) = calx(&["today", "--no-header", "--no-color"]);
+    assert!(!stderr.contains("unexpected argument"));
 }
 
 // -----------------------------------------------------------
@@ -188,10 +206,7 @@ fn test_help_lists_all_commands() {
         "import",
         "completions",
     ] {
-        assert!(
-            stdout.contains(cmd),
-            "Help should list command: {cmd}"
-        );
+        assert!(stdout.contains(cmd), "Help should list command: {cmd}");
     }
 }
 

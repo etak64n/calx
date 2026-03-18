@@ -3,11 +3,11 @@ use crate::error::AppError;
 use crate::output::print_output;
 use crate::store::{CalendarStore, EventInfo};
 use chrono::{Duration, Local, NaiveDate};
-use std::io::IsTerminal;
 use unicode_width::UnicodeWidthStr;
 
 const TIME_W: usize = 15;
 
+#[allow(clippy::too_many_arguments)]
 pub fn run(
     store: &CalendarStore,
     from: Option<String>,
@@ -16,6 +16,8 @@ pub fn run(
     format: OutputFormat,
     verbose: bool,
     fields: Option<&str>,
+    no_color: bool,
+    no_header: bool,
 ) -> Result<(), AppError> {
     let today = Local::now().date_naive();
     let from_date = match from {
@@ -32,7 +34,7 @@ pub fn run(
     };
 
     let events = store.events(from_date, to_date, calendar.as_deref())?;
-    print_events(events, format, verbose, fields);
+    print_events(events, format, verbose, fields, no_color, no_header);
     Ok(())
 }
 
@@ -45,11 +47,14 @@ fn pad_right(s: &str, width: usize) -> String {
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 pub fn print_events(
     events: Vec<EventInfo>,
     format: OutputFormat,
     verbose: bool,
     fields: Option<&str>,
+    no_color: bool,
+    no_header: bool,
 ) {
     // For structured formats, filter fields if specified
     if fields.is_some() && !matches!(format, OutputFormat::Human) {
@@ -58,7 +63,6 @@ pub fn print_events(
         match format {
             OutputFormat::Human => {}
             _ => {
-                // Re-serialize filtered data
                 println!(
                     "{}",
                     serde_json::to_string_pretty(&filtered).unwrap_or_default()
@@ -69,16 +73,13 @@ pub fn print_events(
     }
 
     print_output(format, &events, |evts| {
-        let tty = std::io::stdout().is_terminal();
-
         if evts.is_empty() {
-            if tty {
-                println!("No events found.");
-            }
+            println!("No events found.");
             return;
         }
 
-        let (bold, dim, reset, green, cyan) = if tty {
+        let color = !no_color;
+        let (bold, dim, reset, green, cyan) = if color {
             ("\x1b[1m", "\x1b[2m", "\x1b[0m", "\x1b[32m", "\x1b[36m")
         } else {
             ("", "", "", "", "")
@@ -120,7 +121,7 @@ pub fn print_events(
                     println!();
                 }
                 println!("{bold}{date_str}{reset}");
-                if tty {
+                if !no_header {
                     if verbose {
                         println!(
                             "{dim}  {:>3}  {:<TIME_W$}  {:<title_w$}  {:<cal_w$}  {:<dur_w$}  {:<notes_w$}  ID{reset}",
@@ -142,27 +143,22 @@ pub fn print_events(
             let title_p = pad_right(&ev.title, title_w);
             let cal_p = pad_right(&ev.calendar, cal_w);
 
-            // Build the base columns
-            let time_str;
-            let time_p;
-            if ev.all_day {
-                time_str = if tty {
-                    "┄┄┄ all day ┄┄┄".to_string()
+            let time_str = if ev.all_day {
+                if color {
+                    "\u{2504}\u{2504}\u{2504} all day \u{2504}\u{2504}\u{2504}".to_string()
                 } else {
                     "all day".to_string()
-                };
-                time_p = pad_right(&time_str, TIME_W);
+                }
             } else {
-                time_str = format!(
+                format!(
                     "{} {} {}",
                     ev.start.format("%H:%M"),
-                    if tty { "\u{2013}" } else { "-" },
+                    if color { "\u{2013}" } else { "-" },
                     ev.end.format("%H:%M"),
-                );
-                time_p = pad_right(&time_str, TIME_W);
-            }
+                )
+            };
+            let time_p = pad_right(&time_str, TIME_W);
 
-            // Build verbose suffix
             let verbose_suffix = if verbose {
                 let notes_str = ev
                     .notes
@@ -331,8 +327,7 @@ mod tests {
 
     #[test]
     fn test_pad_right_cjk() {
-        // CJK characters are 2 columns wide
-        assert_eq!(pad_right("会議", 6), "会議  "); // 4 + 2 spaces = 6
-        assert_eq!(pad_right("会議", 4), "会議"); // exactly 4
+        assert_eq!(pad_right("会議", 6), "会議  ");
+        assert_eq!(pad_right("会議", 4), "会議");
     }
 }

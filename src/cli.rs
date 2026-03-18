@@ -43,6 +43,14 @@ pub struct Cli {
     /// Comma-separated list of fields to display (e.g. title,start,end,calendar)
     #[arg(long, global = true)]
     pub fields: Option<String>,
+
+    /// Suppress column headers
+    #[arg(long, global = true)]
+    pub no_header: bool,
+
+    /// Disable color output
+    #[arg(long, global = true)]
+    pub no_color: bool,
 }
 
 #[derive(Subcommand)]
