@@ -51,22 +51,6 @@ pub struct Cli {
     /// Disable color output
     #[arg(long, global = true)]
     pub no_color: bool,
-
-    /// Sort events by field (date, title, calendar, duration)
-    #[arg(long, global = true)]
-    pub sort: Option<String>,
-
-    /// Maximum number of events to display
-    #[arg(long, global = true)]
-    pub limit: Option<usize>,
-
-    /// Only show events after this time (HH:MM)
-    #[arg(long, global = true)]
-    pub after: Option<String>,
-
-    /// Only show events before this time (HH:MM)
-    #[arg(long, global = true)]
-    pub before: Option<String>,
 }
 
 #[derive(Subcommand)]
@@ -85,6 +69,18 @@ pub enum Commands {
         /// Filter by calendar name
         #[arg(long)]
         calendar: Option<String>,
+        /// Sort by: date, title, calendar, duration
+        #[arg(long)]
+        sort: Option<String>,
+        /// Maximum number of events to display
+        #[arg(long)]
+        limit: Option<usize>,
+        /// Only show events starting at or after this time (HH:MM)
+        #[arg(long)]
+        after: Option<String>,
+        /// Only show events starting before this time (HH:MM)
+        #[arg(long)]
+        before: Option<String>,
     },
 
     /// Show today's schedule
@@ -92,6 +88,18 @@ pub enum Commands {
         /// Filter by calendar name
         #[arg(long)]
         calendar: Option<String>,
+        /// Sort by: date, title, calendar, duration
+        #[arg(long)]
+        sort: Option<String>,
+        /// Maximum number of events to display
+        #[arg(long)]
+        limit: Option<usize>,
+        /// Only show events starting at or after this time (HH:MM)
+        #[arg(long)]
+        after: Option<String>,
+        /// Only show events starting before this time (HH:MM)
+        #[arg(long)]
+        before: Option<String>,
     },
 
     /// Show upcoming events for the next N days
@@ -102,6 +110,18 @@ pub enum Commands {
         /// Filter by calendar name
         #[arg(long)]
         calendar: Option<String>,
+        /// Sort by: date, title, calendar, duration
+        #[arg(long)]
+        sort: Option<String>,
+        /// Maximum number of events to display
+        #[arg(long)]
+        limit: Option<usize>,
+        /// Only show events starting at or after this time (HH:MM)
+        #[arg(long)]
+        after: Option<String>,
+        /// Only show events starting before this time (HH:MM)
+        #[arg(long)]
+        before: Option<String>,
     },
 
     /// Create a new event (supports natural language dates)
@@ -190,6 +210,18 @@ pub enum Commands {
         /// End of search range (default: 90 days ahead)
         #[arg(long)]
         to: Option<String>,
+        /// Sort by: date, title, calendar, duration
+        #[arg(long)]
+        sort: Option<String>,
+        /// Maximum number of events to display
+        #[arg(long)]
+        limit: Option<usize>,
+        /// Only show events starting at or after this time (HH:MM)
+        #[arg(long)]
+        after: Option<String>,
+        /// Only show events starting before this time (HH:MM)
+        #[arg(long)]
+        before: Option<String>,
     },
 
     /// Show the next upcoming event (composable with `watch(1)`)

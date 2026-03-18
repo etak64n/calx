@@ -34,37 +34,74 @@ fn main() {
         }
     };
 
-    let opts = DisplayOpts {
+    let base_opts = DisplayOpts {
         verbose: cli.verbose,
         fields: cli.fields.as_deref(),
         no_color: cli.no_color,
         no_header: cli.no_header,
-        sort: cli.sort.as_deref(),
-        limit: cli.limit,
-        after: cli.after.as_deref(),
-        before: cli.before.as_deref(),
+        ..Default::default()
     };
 
     let result = match cli.command {
         Commands::Calendars => {
-            commands::calendars::run(&store, cli.output, opts.no_color, opts.no_header)
+            commands::calendars::run(&store, cli.output, base_opts.no_color, base_opts.no_header)
         }
         Commands::Events {
             ref from,
             ref to,
             ref calendar,
-        } => commands::events::run(
-            &store,
-            from.clone(),
-            to.clone(),
-            calendar.clone(),
-            cli.output,
-            &opts,
-        ),
-        Commands::Today { ref calendar } => {
+            ref sort,
+            limit,
+            ref after,
+            ref before,
+        } => {
+            let opts = DisplayOpts {
+                sort: sort.as_deref(),
+                limit,
+                after: after.as_deref(),
+                before: before.as_deref(),
+                ..base_opts
+            };
+            commands::events::run(
+                &store,
+                from.clone(),
+                to.clone(),
+                calendar.clone(),
+                cli.output,
+                &opts,
+            )
+        }
+        Commands::Today {
+            ref calendar,
+            ref sort,
+            limit,
+            ref after,
+            ref before,
+        } => {
+            let opts = DisplayOpts {
+                sort: sort.as_deref(),
+                limit,
+                after: after.as_deref(),
+                before: before.as_deref(),
+                ..base_opts
+            };
             commands::today::run(&store, calendar.clone(), cli.output, &opts)
         }
-        Commands::Upcoming { days, ref calendar } => {
+        Commands::Upcoming {
+            days,
+            ref calendar,
+            ref sort,
+            limit,
+            ref after,
+            ref before,
+        } => {
+            let opts = DisplayOpts {
+                sort: sort.as_deref(),
+                limit,
+                after: after.as_deref(),
+                before: before.as_deref(),
+                ..base_opts
+            };
             commands::upcoming::run(&store, days, calendar.clone(), cli.output, &opts)
         }
         Commands::Add {
@@ -116,14 +153,29 @@ fn main() {
             cli.output,
         ),
         Commands::Delete { ref event_id } => commands::delete::run(&store, event_id, cli.output),
-        Commands::Show { ref event_id } => commands::show::run(&store, event_id, cli.output, &opts),
+        Commands::Show { ref event_id } => {
+            commands::show::run(&store, event_id, cli.output, &base_opts)
+        }
         Commands::Search {
             ref query,
             ref from,
             ref to,
-        } => commands::search::run(&store, query, from.clone(), to.clone(), cli.output, &opts),
+            ref sort,
+            limit,
+            ref after,
+            ref before,
+        } => {
+            let opts = DisplayOpts {
+                sort: sort.as_deref(),
+                limit,
+                after: after.as_deref(),
+                before: before.as_deref(),
+                ..base_opts
+            };
+            commands::search::run(&store, query, from.clone(), to.clone(), cli.output, &opts)
+        }
         Commands::Next { ref calendar } => {
-            commands::next::run(&store, calendar.clone(), cli.output, &opts)
+            commands::next::run(&store, calendar.clone(), cli.output, &base_opts)
         }
         Commands::Import { .. } => unreachable!(),
         Commands::Completions { .. } => unreachable!(),
