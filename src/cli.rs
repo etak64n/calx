@@ -5,6 +5,9 @@ use clap_complete::Shell;
 pub enum OutputFormat {
     Human,
     Json,
+    Yaml,
+    Csv,
+    Tsv,
 }
 
 #[derive(Parser)]

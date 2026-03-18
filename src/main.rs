@@ -107,7 +107,7 @@ fn main() {
 fn print_error(cli: &Cli, error: &error::AppError) {
     match cli.output {
         cli::OutputFormat::Human => eprintln!("Error: {error}"),
-        cli::OutputFormat::Json => {
+        _ => {
             let err = serde_json::json!({ "error": error.to_string() });
             eprintln!("{}", serde_json::to_string_pretty(&err).unwrap());
         }
