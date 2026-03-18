@@ -2,7 +2,7 @@ use crate::cli::OutputFormat;
 use crate::error::AppError;
 use crate::output::print_output;
 use crate::store::CalendarStore;
-use chrono::NaiveDateTime;
+use chrono::{NaiveDateTime, TimeZone};
 use serde::Serialize;
 use std::io::Read;
 
@@ -137,14 +137,44 @@ fn parse_ics_dt_line(line: &str) -> (String, bool) {
 
 fn import_csv(store: &CalendarStore, content: &str) -> Result<usize, AppError> {
     let mut rdr = csv::Reader::from_reader(content.as_bytes());
-    let mut count = 0;
+    let headers = rdr
+        .headers()
+        .map_err(|e| AppError::EventKit(e.to_string()))?
+        .clone();
 
+    // Build column index from header names
+    let idx = |name: &str| headers.iter().position(|h| h == name);
+    let title_i = idx("title")
+        .ok_or_else(|| AppError::EventKit("CSV missing 'title' column header".to_string()))?;
+    let start_i = idx("start")
+        .ok_or_else(|| AppError::EventKit("CSV missing 'start' column header".to_string()))?;
+    let end_i = idx("end")
+        .ok_or_else(|| AppError::EventKit("CSV missing 'end' column header".to_string()))?;
+    let notes_i = idx("notes");
+    let all_day_i = idx("all_day");
+    let location_i = idx("location");
+    let url_i = idx("url");
+    let calendar_i = idx("calendar");
+
+    let mut count = 0;
     for result in rdr.records() {
         let record = result.map_err(|e| AppError::EventKit(e.to_string()))?;
-        let title = record.get(1).unwrap_or_default();
-        let start_str = record.get(2).unwrap_or_default();
-        let end_str = record.get(3).unwrap_or_default();
-        let notes = record.get(6).filter(|s| !s.is_empty());
+        let title = record.get(title_i).unwrap_or_default();
+        let start_str = record.get(start_i).unwrap_or_default();
+        let end_str = record.get(end_i).unwrap_or_default();
+        let notes = notes_i
+            .and_then(|i| record.get(i))
+            .filter(|s| !s.is_empty());
+        let all_day = all_day_i
+            .and_then(|i| record.get(i))
+            .is_some_and(|v| v == "true");
+        let location = location_i
+            .and_then(|i| record.get(i))
+            .filter(|s| !s.is_empty());
+        let url = url_i.and_then(|i| record.get(i)).filter(|s| !s.is_empty());
+        let calendar = calendar_i
+            .and_then(|i| record.get(i))
+            .filter(|s| !s.is_empty());
 
         let start_dt = parse_csv_datetime(start_str)
             .ok_or_else(|| AppError::InvalidDate(start_str.to_string()))?;
@@ -152,20 +182,30 @@ fn import_csv(store: &CalendarStore, content: &str) -> Result<usize, AppError> {
             .ok_or_else(|| AppError::InvalidDate(end_str.to_string()))?;
 
         store.add_event(
-            title, start_dt, end_dt, None, None, None, notes, false, None, None,
+            title, start_dt, end_dt, calendar, location, url, notes, all_day, None, None,
         )?;
         count += 1;
     }
     Ok(count)
 }
 
+/// Parse ICS datetime, converting UTC (Z suffix) to local time.
 pub(crate) fn parse_ics_datetime(s: &str) -> Option<NaiveDateTime> {
-    let s = s.trim_end_matches('Z'); // Handle UTC suffix
-    NaiveDateTime::parse_from_str(s, "%Y%m%dT%H%M%S")
-        .or_else(|_| {
-            chrono::NaiveDate::parse_from_str(s, "%Y%m%d").map(|d| d.and_hms_opt(0, 0, 0).unwrap())
-        })
-        .ok()
+    if s.ends_with('Z') {
+        // UTC time: convert to local
+        let s = s.trim_end_matches('Z');
+        let utc_dt = NaiveDateTime::parse_from_str(s, "%Y%m%dT%H%M%S").ok()?;
+        let utc = chrono::Utc.from_utc_datetime(&utc_dt);
+        Some(utc.with_timezone(&chrono::Local).naive_local())
+    } else {
+        // Local time or date-only
+        NaiveDateTime::parse_from_str(s, "%Y%m%dT%H%M%S")
+            .or_else(|_| {
+                chrono::NaiveDate::parse_from_str(s, "%Y%m%d")
+                    .map(|d| d.and_hms_opt(0, 0, 0).unwrap())
+            })
+            .ok()
+    }
 }
 
 pub(crate) fn parse_csv_datetime(s: &str) -> Option<NaiveDateTime> {
@@ -195,9 +235,18 @@ mod tests {
     }
 
     #[test]
-    fn test_ics_datetime_with_z() {
+    fn test_ics_datetime_with_z_converts_to_local() {
+        // 14:00 UTC should become local time (UTC + local offset)
         let dt = parse_ics_datetime("20260320T140000Z").unwrap();
-        assert_eq!(dt.hour(), 14);
+        let expected_utc = chrono::NaiveDate::from_ymd_opt(2026, 3, 20)
+            .unwrap()
+            .and_hms_opt(14, 0, 0)
+            .unwrap();
+        let expected_local = chrono::Utc
+            .from_utc_datetime(&expected_utc)
+            .with_timezone(&chrono::Local)
+            .naive_local();
+        assert_eq!(dt, expected_local);
     }
 
     #[test]

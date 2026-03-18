@@ -66,10 +66,9 @@ fn print_ics(events: &[EventInfo]) {
             println!("DTSTART:{}", ev.start.format("%Y%m%dT%H%M%S"));
             println!("DTEND:{}", ev.end.format("%Y%m%dT%H%M%S"));
         }
-        println!("SUMMARY:{}", ev.title);
+        println!("SUMMARY:{}", ics_escape(&ev.title));
         if let Some(notes) = &ev.notes {
-            let escaped = notes.replace('\n', "\\n");
-            println!("DESCRIPTION:{escaped}");
+            println!("DESCRIPTION:{}", ics_escape(notes));
         }
         println!("END:VEVENT");
     }
@@ -157,6 +156,14 @@ fn print_table<T: Serialize>(data: &T) {
         print!("{}", if i < widths.len() - 1 { "┴" } else { "┘" });
     }
     println!();
+}
+
+/// Escape text per RFC 5545 section 3.3.11 (TEXT).
+fn ics_escape(s: &str) -> String {
+    s.replace('\\', "\\\\")
+        .replace(';', "\\;")
+        .replace(',', "\\,")
+        .replace('\n', "\\n")
 }
 
 fn value_to_string(v: &serde_json::Value) -> String {
