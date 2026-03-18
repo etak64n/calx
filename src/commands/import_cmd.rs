@@ -180,9 +180,10 @@ fn parse_ics_dt_line(line: &str) -> IcsDtParsed {
     let all_day = line.contains("VALUE=DATE");
 
     // Extract TZID if present: DTSTART;TZID=America/New_York:20260320T090000
+    // Stop at ';' or ':' (whichever comes first) to handle extra params like ;X-FOO=bar
     let tzid = if let Some(tzid_start) = line.find("TZID=") {
         let after = &line[tzid_start + 5..];
-        let end = after.find(':').unwrap_or(after.len());
+        let end = after.find([':', ';']).unwrap_or(after.len());
         Some(after[..end].to_string())
     } else {
         None
@@ -198,7 +199,7 @@ fn parse_ics_dt_line(line: &str) -> IcsDtParsed {
     }
 }
 
-/// Parse ICS datetime with optional timezone.
+/// Parse ICS datetime with optional IANA timezone (DST-aware via chrono-tz).
 pub(crate) fn parse_ics_datetime_with_tz(s: &str, tzid: Option<&str>) -> Option<NaiveDateTime> {
     if s.ends_with('Z') {
         // UTC
@@ -207,11 +208,10 @@ pub(crate) fn parse_ics_datetime_with_tz(s: &str, tzid: Option<&str>) -> Option<
         let utc = chrono::Utc.from_utc_datetime(&utc_dt);
         Some(utc.with_timezone(&chrono::Local).naive_local())
     } else if let Some(tz_name) = tzid {
-        // Known timezone: apply UTC offset
+        // IANA timezone: DST-aware conversion via chrono-tz
         let naive = NaiveDateTime::parse_from_str(s, "%Y%m%dT%H%M%S").ok()?;
-        let offset_secs = tz_name_to_offset_secs(tz_name)?;
-        let fixed = chrono::FixedOffset::east_opt(offset_secs)?;
-        let dt = fixed.from_local_datetime(&naive).earliest()?;
+        let tz: chrono_tz::Tz = tz_name.parse().ok()?;
+        let dt = tz.from_local_datetime(&naive).earliest()?;
         Some(dt.with_timezone(&chrono::Local).naive_local())
     } else {
         // Local time or date-only
@@ -228,32 +228,6 @@ pub(crate) fn parse_ics_datetime_with_tz(s: &str, tzid: Option<&str>) -> Option<
 #[cfg(test)]
 fn parse_ics_datetime(s: &str) -> Option<NaiveDateTime> {
     parse_ics_datetime_with_tz(s, None)
-}
-
-/// Map common IANA timezone names to UTC offsets in seconds.
-/// This avoids requiring chrono-tz as a dependency.
-fn tz_name_to_offset_secs(name: &str) -> Option<i32> {
-    // Standard offsets (non-DST). For DST-aware conversion,
-    // chrono-tz would be needed. This covers the most common cases.
-    Some(match name {
-        "UTC" | "GMT" => 0,
-        "US/Eastern" | "America/New_York" => -5 * 3600,
-        "US/Central" | "America/Chicago" => -6 * 3600,
-        "US/Mountain" | "America/Denver" => -7 * 3600,
-        "US/Pacific" | "America/Los_Angeles" => -8 * 3600,
-        "Europe/London" => 0,
-        "Europe/Paris" | "Europe/Berlin" | "Europe/Amsterdam" => 3600,
-        "Europe/Helsinki" | "Europe/Athens" => 2 * 3600,
-        "Europe/Moscow" => 3 * 3600,
-        "Asia/Dubai" => 4 * 3600,
-        "Asia/Kolkata" | "Asia/Calcutta" => 5 * 3600 + 1800,
-        "Asia/Bangkok" | "Asia/Jakarta" => 7 * 3600,
-        "Asia/Shanghai" | "Asia/Hong_Kong" | "Asia/Singapore" => 8 * 3600,
-        "Asia/Tokyo" => 9 * 3600,
-        "Australia/Sydney" => 10 * 3600,
-        "Pacific/Auckland" => 12 * 3600,
-        _ => return None,
-    })
 }
 
 fn import_csv(store: &CalendarStore, content: &str) -> Result<usize, AppError> {
@@ -352,10 +326,27 @@ mod tests {
     }
 
     #[test]
-    fn test_ics_datetime_tzid_converts() {
-        // 09:00 America/New_York (UTC-5) = 14:00 UTC
+    fn test_ics_datetime_tzid_ny_dst() {
+        // 2026-03-20: New York is in EDT (UTC-4)
+        // 09:00 EDT = 13:00 UTC
         let dt = parse_ics_datetime_with_tz("20260320T090000", Some("America/New_York")).unwrap();
         let utc_dt = chrono::NaiveDate::from_ymd_opt(2026, 3, 20)
+            .unwrap()
+            .and_hms_opt(13, 0, 0)
+            .unwrap();
+        let expected = chrono::Utc
+            .from_utc_datetime(&utc_dt)
+            .with_timezone(&chrono::Local)
+            .naive_local();
+        assert_eq!(dt, expected);
+    }
+
+    #[test]
+    fn test_ics_datetime_tzid_ny_est() {
+        // 2026-01-15: New York is in EST (UTC-5)
+        // 09:00 EST = 14:00 UTC
+        let dt = parse_ics_datetime_with_tz("20260115T090000", Some("America/New_York")).unwrap();
+        let utc_dt = chrono::NaiveDate::from_ymd_opt(2026, 1, 15)
             .unwrap()
             .and_hms_opt(14, 0, 0)
             .unwrap();
@@ -368,7 +359,8 @@ mod tests {
 
     #[test]
     fn test_ics_datetime_tzid_tokyo() {
-        // 14:00 Asia/Tokyo (UTC+9) = 05:00 UTC
+        // Asia/Tokyo: no DST, always UTC+9
+        // 14:00 JST = 05:00 UTC
         let dt = parse_ics_datetime_with_tz("20260320T140000", Some("Asia/Tokyo")).unwrap();
         let utc_dt = chrono::NaiveDate::from_ymd_opt(2026, 3, 20)
             .unwrap()
@@ -379,6 +371,34 @@ mod tests {
             .with_timezone(&chrono::Local)
             .naive_local();
         assert_eq!(dt, expected);
+    }
+
+    #[test]
+    fn test_ics_datetime_tzid_sydney_dst() {
+        // 2026-03-20: Sydney is in AEDT (UTC+11)
+        // 10:00 AEDT = 23:00 UTC (previous day)
+        let dt = parse_ics_datetime_with_tz("20260320T100000", Some("Australia/Sydney")).unwrap();
+        let utc_dt = chrono::NaiveDate::from_ymd_opt(2026, 3, 19)
+            .unwrap()
+            .and_hms_opt(23, 0, 0)
+            .unwrap();
+        let expected = chrono::Utc
+            .from_utc_datetime(&utc_dt)
+            .with_timezone(&chrono::Local)
+            .naive_local();
+        assert_eq!(dt, expected);
+    }
+
+    #[test]
+    fn test_ics_datetime_tzid_unknown_returns_none() {
+        assert!(parse_ics_datetime_with_tz("20260320T090000", Some("Fake/Zone")).is_none());
+    }
+
+    #[test]
+    fn test_ics_dt_line_tzid_with_extra_params() {
+        let p = parse_ics_dt_line("DTSTART;TZID=America/New_York;X-FOO=bar:20260320T090000");
+        assert_eq!(p.value, "20260320T090000");
+        assert_eq!(p.tzid.as_deref(), Some("America/New_York"));
     }
 
     #[test]
