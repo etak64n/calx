@@ -213,6 +213,9 @@ pub enum Commands {
         /// Require an exact match when resolving --query
         #[arg(long, requires = "query")]
         exact: bool,
+        /// Pick interactively when multiple events match --query
+        #[arg(short, long, requires = "query")]
+        interactive: bool,
         /// Limit --query to a calendar name
         #[arg(long, requires = "query")]
         in_calendar: Option<String>,
@@ -266,6 +269,9 @@ pub enum Commands {
         /// Require an exact match when resolving --query
         #[arg(long, requires = "query")]
         exact: bool,
+        /// Pick interactively when multiple events match --query
+        #[arg(short, long, requires = "query")]
+        interactive: bool,
         /// Limit --query to a calendar name
         #[arg(long, requires = "query")]
         in_calendar: Option<String>,
@@ -298,6 +304,9 @@ pub enum Commands {
         /// Require an exact match when resolving --query
         #[arg(long, requires = "query")]
         exact: bool,
+        /// Pick interactively when multiple events match --query
+        #[arg(short, long, requires = "query")]
+        interactive: bool,
         /// Limit --query to a calendar name
         #[arg(long, requires = "query")]
         in_calendar: Option<String>,

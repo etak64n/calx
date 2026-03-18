@@ -9,13 +9,23 @@ pub fn run(
     event_id: Option<&str>,
     query: Option<&str>,
     exact: bool,
+    interactive: bool,
     in_calendar: Option<&str>,
     from: Option<&str>,
     to: Option<&str>,
     format: OutputFormat,
     no_color: bool,
 ) -> Result<(), AppError> {
-    let event = super::select::resolve_event(store, event_id, query, exact, in_calendar, from, to)?;
+    let event = super::select::resolve_event(
+        store,
+        event_id,
+        query,
+        exact,
+        in_calendar,
+        from,
+        to,
+        interactive,
+    )?;
     print_output(format, &event, |ev| {
         let (bold, dim, reset) = if !no_color {
             ("\x1b[1m", "\x1b[2m", "\x1b[0m")

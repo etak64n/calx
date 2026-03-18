@@ -398,41 +398,6 @@ impl CalendarStore {
             .collect())
     }
 
-    pub fn find_unique_event(
-        &self,
-        query: &str,
-        exact: bool,
-        from: NaiveDate,
-        to: NaiveDate,
-        calendar_name: Option<&str>,
-    ) -> Result<EventInfo, AppError> {
-        let mut matches = self.search_events(query, exact, from, to, calendar_name)?;
-        match matches.len() {
-            0 => Err(AppError::EventNotFound(query.to_string())),
-            1 => Ok(matches.remove(0)),
-            count => {
-                matches.sort_by_key(|e| e.start);
-                let preview = matches
-                    .iter()
-                    .take(5)
-                    .map(|e| {
-                        format!(
-                            "{} [{}] {} ({})",
-                            e.title,
-                            e.calendar,
-                            e.start.format("%Y-%m-%d %H:%M"),
-                            e.id
-                        )
-                    })
-                    .collect::<Vec<_>>()
-                    .join("; ");
-                Err(AppError::InvalidArgument(format!(
-                    "Query matched {count} events. Narrow it with --exact/--in-calendar/--from/--to. Matches: {preview}"
-                )))
-            }
-        }
-    }
-
     #[allow(clippy::too_many_arguments)]
     pub fn update_event(
         &self,

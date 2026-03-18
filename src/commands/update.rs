@@ -16,6 +16,7 @@ pub fn run(
     event_id: Option<&str>,
     query: Option<&str>,
     exact: bool,
+    interactive: bool,
     in_calendar: Option<&str>,
     from: Option<&str>,
     to: Option<&str>,
@@ -41,7 +42,16 @@ pub fn run(
     };
     let start_dt = start.map(parse_input).transpose()?;
     let end_dt = end.map(parse_input).transpose()?;
-    let event = super::select::resolve_event(store, event_id, query, exact, in_calendar, from, to)?;
+    let event = super::select::resolve_event(
+        store,
+        event_id,
+        query,
+        exact,
+        in_calendar,
+        from,
+        to,
+        interactive,
+    )?;
 
     store.update_event(
         &event.id,
