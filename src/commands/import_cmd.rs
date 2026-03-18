@@ -95,6 +95,8 @@ fn import_ics(store: &CalendarStore, content: &str) -> Result<usize, AppError> {
                         None,
                         notes_opt.as_deref(),
                         is_all_day,
+                        None,
+                        None,
                     )?;
                     count += 1;
                 }
@@ -149,7 +151,9 @@ fn import_csv(store: &CalendarStore, content: &str) -> Result<usize, AppError> {
         let end_dt = parse_csv_datetime(end_str)
             .ok_or_else(|| AppError::InvalidDate(end_str.to_string()))?;
 
-        store.add_event(title, start_dt, end_dt, None, None, None, notes, false)?;
+        store.add_event(
+            title, start_dt, end_dt, None, None, None, notes, false, None, None,
+        )?;
         count += 1;
     }
     Ok(count)

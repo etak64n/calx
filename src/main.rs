@@ -84,6 +84,8 @@ fn main() {
             ref url,
             ref notes,
             all_day,
+            ref repeat,
+            repeat_count,
         } => commands::add::run(
             &store,
             title,
@@ -94,6 +96,8 @@ fn main() {
             url.as_deref(),
             notes.as_deref(),
             all_day,
+            repeat.as_deref(),
+            repeat_count,
             cli.output,
         ),
         Commands::Update {

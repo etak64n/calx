@@ -114,6 +114,12 @@ pub enum Commands {
         /// Mark as all-day event
         #[arg(long, default_value_t = false)]
         all_day: bool,
+        /// Repeat: daily, weekly, monthly, yearly
+        #[arg(long)]
+        repeat: Option<String>,
+        /// Number of occurrences (default: forever)
+        #[arg(long)]
+        repeat_count: Option<u32>,
     },
 
     /// Modify an existing event

@@ -21,6 +21,8 @@ pub fn run(
     url: Option<&str>,
     notes: Option<&str>,
     all_day: bool,
+    repeat: Option<&str>,
+    repeat_count: Option<u32>,
     format: OutputFormat,
 ) -> Result<(), AppError> {
     let start_dt =
@@ -28,7 +30,16 @@ pub fn run(
     let end_dt =
         dateparse::parse_datetime(end).ok_or_else(|| AppError::InvalidDate(end.to_string()))?;
     let event_id = store.add_event(
-        title, start_dt, end_dt, calendar, location, url, notes, all_day,
+        title,
+        start_dt,
+        end_dt,
+        calendar,
+        location,
+        url,
+        notes,
+        all_day,
+        repeat,
+        repeat_count,
     )?;
 
     let result = AddResult { event_id };

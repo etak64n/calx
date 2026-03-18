@@ -1,5 +1,6 @@
 use crate::error::AppError;
 use chrono::{DateTime, Local, NaiveDate, NaiveDateTime, TimeZone};
+use objc2::AnyThread;
 use objc2::rc::Retained;
 use objc2::runtime::Bool;
 use objc2_event_kit::*;
@@ -194,6 +195,8 @@ impl CalendarStore {
         url: Option<&str>,
         notes: Option<&str>,
         all_day: bool,
+        repeat: Option<&str>,
+        repeat_count: Option<u32>,
     ) -> Result<String, AppError> {
         let event = unsafe { EKEvent::eventWithEventStore(&self.store) };
 
@@ -244,6 +247,33 @@ impl CalendarStore {
             let default_cal = unsafe { self.store.defaultCalendarForNewEvents() };
             if let Some(cal) = default_cal {
                 unsafe { event.setCalendar(Some(&cal)) };
+            }
+        }
+
+        if let Some(freq_str) = repeat {
+            let freq = match freq_str {
+                "daily" => EKRecurrenceFrequency::Daily,
+                "weekly" => EKRecurrenceFrequency::Weekly,
+                "monthly" => EKRecurrenceFrequency::Monthly,
+                "yearly" => EKRecurrenceFrequency::Yearly,
+                _ => {
+                    return Err(AppError::EventKit(format!(
+                        "Unknown repeat frequency: {freq_str}. Use daily, weekly, monthly, or yearly."
+                    )));
+                }
+            };
+            let end = repeat_count
+                .map(|n| unsafe { EKRecurrenceEnd::recurrenceEndWithOccurrenceCount(n as usize) });
+            let rule = unsafe {
+                EKRecurrenceRule::initRecurrenceWithFrequency_interval_end(
+                    EKRecurrenceRule::alloc(),
+                    freq,
+                    1,
+                    end.as_deref(),
+                )
+            };
+            unsafe {
+                event.addRecurrenceRule(&rule);
             }
         }
 

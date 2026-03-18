@@ -26,6 +26,8 @@ objc2-event-kit = { version = "0.3", features = [
     "EKEvent",
     "EKEventStore",
     "EKObject",
+    "EKRecurrenceEnd",
+    "EKRecurrenceRule",
     "EKSource",
     "EKTypes",
 ] }
