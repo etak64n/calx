@@ -1,5 +1,6 @@
 mod cli;
 mod commands;
+mod dateparse;
 mod error;
 mod output;
 mod store;
@@ -59,7 +60,41 @@ fn main() {
             all_day,
             cli.output,
         ),
+        Commands::Update {
+            ref event_id,
+            ref title,
+            ref start,
+            ref end,
+            ref notes,
+            ref calendar,
+            all_day,
+        } => commands::update::run(
+            &store,
+            event_id,
+            title.as_deref(),
+            start.as_deref(),
+            end.as_deref(),
+            notes.as_deref(),
+            calendar.as_deref(),
+            all_day,
+            cli.output,
+        ),
         Commands::Delete { ref event_id } => commands::delete::run(&store, event_id, cli.output),
+        Commands::Show { ref event_id } => commands::show::run(&store, event_id, cli.output),
+        Commands::Search {
+            ref query,
+            ref from,
+            ref to,
+        } => commands::search::run(&store, query, from.clone(), to.clone(), cli.output),
+        Commands::Watch { ref calendar } => commands::watch::run(&store, calendar.clone()),
+        Commands::Export {
+            ref format,
+            ref from,
+            ref to,
+            ref calendar,
+        } => commands::export::run(&store, format, from.clone(), to.clone(), calendar.clone()),
+        Commands::Import { ref file } => commands::import_cmd::run(&store, file, cli.output),
+        Commands::Interactive => commands::interactive::run(&store, cli.output),
         Commands::Completions { .. } => unreachable!(),
     };
 

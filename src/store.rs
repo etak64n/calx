@@ -206,6 +206,115 @@ impl CalendarStore {
         Ok(event_id)
     }
 
+    pub fn get_event(&self, event_id: &str) -> Result<EventInfo, AppError> {
+        let ns_id = NSString::from_str(event_id);
+        let event = unsafe { self.store.eventWithIdentifier(&ns_id) }
+            .ok_or_else(|| AppError::EventNotFound(event_id.to_string()))?;
+
+        let title = unsafe { event.title() }.to_string();
+        let calendar = unsafe { event.calendar() }
+            .map(|c| unsafe { c.title() }.to_string())
+            .unwrap_or_default();
+        let start = nsdate_to_datetime(unsafe { event.startDate() });
+        let end = nsdate_to_datetime(unsafe { event.endDate() });
+        let notes = unsafe { event.notes() }.map(|n| n.to_string());
+        let all_day = unsafe { event.isAllDay() };
+        let id = unsafe { event.eventIdentifier() }
+            .map(|i| i.to_string())
+            .unwrap_or_default();
+
+        Ok(EventInfo {
+            id,
+            title,
+            start,
+            end,
+            calendar,
+            notes,
+            all_day,
+        })
+    }
+
+    pub fn search_events(
+        &self,
+        query: &str,
+        from: NaiveDate,
+        to: NaiveDate,
+    ) -> Result<Vec<EventInfo>, AppError> {
+        let events = self.events(from, to, None)?;
+        let query_lower = query.to_lowercase();
+        Ok(events
+            .into_iter()
+            .filter(|e| {
+                e.title.to_lowercase().contains(&query_lower)
+                    || e.notes
+                        .as_ref()
+                        .is_some_and(|n| n.to_lowercase().contains(&query_lower))
+            })
+            .collect())
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub fn update_event(
+        &self,
+        event_id: &str,
+        title: Option<&str>,
+        start: Option<NaiveDateTime>,
+        end: Option<NaiveDateTime>,
+        notes: Option<&str>,
+        calendar_name: Option<&str>,
+        all_day: Option<bool>,
+    ) -> Result<(), AppError> {
+        let ns_id = NSString::from_str(event_id);
+        let event = unsafe { self.store.eventWithIdentifier(&ns_id) }
+            .ok_or_else(|| AppError::EventNotFound(event_id.to_string()))?;
+
+        if let Some(t) = title {
+            let ns = NSString::from_str(t);
+            unsafe { event.setTitle(Some(&ns)) };
+        }
+
+        if let Some(s) = start {
+            let ts = Local
+                .from_local_datetime(&s)
+                .earliest()
+                .ok_or_else(|| AppError::InvalidDate(s.to_string()))?
+                .timestamp() as f64;
+            let d = NSDate::dateWithTimeIntervalSince1970(ts);
+            unsafe { event.setStartDate(Some(&d)) };
+        }
+
+        if let Some(e) = end {
+            let ts = Local
+                .from_local_datetime(&e)
+                .earliest()
+                .ok_or_else(|| AppError::InvalidDate(e.to_string()))?
+                .timestamp() as f64;
+            let d = NSDate::dateWithTimeIntervalSince1970(ts);
+            unsafe { event.setEndDate(Some(&d)) };
+        }
+
+        if let Some(n) = notes {
+            let ns = NSString::from_str(n);
+            unsafe { event.setNotes(Some(&ns)) };
+        }
+
+        if let Some(name) = calendar_name {
+            let cal = self.find_calendar(name)?;
+            unsafe { event.setCalendar(Some(&cal)) };
+        }
+
+        if let Some(ad) = all_day {
+            unsafe { event.setAllDay(ad) };
+        }
+
+        unsafe {
+            self.store
+                .saveEvent_span_error(&event, EKSpan::ThisEvent)
+                .map_err(|e| AppError::EventKit(e.to_string()))?;
+        }
+        Ok(())
+    }
+
     pub fn delete_event(&self, event_id: &str) -> Result<(), AppError> {
         let ns_id = NSString::from_str(event_id);
         let event = unsafe { self.store.eventWithIdentifier(&ns_id) }
