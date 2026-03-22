@@ -7,6 +7,8 @@ use objc2_foundation::*;
 use serde::Deserialize;
 use serde::de::DeserializeOwned;
 use std::ffi::OsStr;
+use std::fs;
+use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::sync::{Mutex, OnceLock, mpsc};
 use std::thread::sleep;
@@ -19,8 +21,17 @@ where
     I: IntoIterator<Item = S>,
     S: AsRef<OsStr>,
 {
+    calx_env(args, &[])
+}
+
+fn calx_env<I, S>(args: I, envs: &[(&str, &str)]) -> (String, String, i32)
+where
+    I: IntoIterator<Item = S>,
+    S: AsRef<OsStr>,
+{
     let output = Command::new(env!("CARGO_BIN_EXE_calx"))
         .args(args)
+        .envs(envs.iter().copied())
         .output()
         .expect("failed to execute calx");
     (
@@ -31,7 +42,11 @@ where
 }
 
 fn parse_success_json<T: DeserializeOwned>(args: &[String]) -> T {
-    let (stdout, stderr, code) = calx(args);
+    parse_success_json_env(args, &[])
+}
+
+fn parse_success_json_env<T: DeserializeOwned>(args: &[String], envs: &[(&str, &str)]) -> T {
+    let (stdout, stderr, code) = calx_env(args, envs);
     assert_eq!(
         code, 0,
         "command failed:\nargs={args:?}\nstdout={stdout}\nstderr={stderr}"
@@ -39,6 +54,43 @@ fn parse_success_json<T: DeserializeOwned>(args: &[String]) -> T {
     serde_json::from_str(&stdout).unwrap_or_else(|e| {
         panic!("failed to parse JSON:\nargs={args:?}\nstdout={stdout}\nstderr={stderr}\nerror={e}")
     })
+}
+
+fn wait_for_success_json_env<T, F, P>(mut args_fn: F, envs: &[(&str, &str)], predicate: P) -> T
+where
+    T: DeserializeOwned,
+    F: FnMut() -> Vec<String>,
+    P: Fn(&T) -> bool,
+{
+    let mut last_error = String::new();
+    for attempt in 0..20 {
+        let args = args_fn();
+        let (stdout, stderr, code) = calx_env(&args, envs);
+        if code == 0 {
+            match serde_json::from_str::<T>(&stdout) {
+                Ok(value) if predicate(&value) => return value,
+                Ok(_) => {
+                    last_error = format!(
+                        "predicate not satisfied on attempt {}:\nargs={args:?}\nstdout={stdout}\nstderr={stderr}",
+                        attempt + 1
+                    );
+                }
+                Err(e) => {
+                    last_error = format!(
+                        "failed to parse JSON on attempt {}:\nargs={args:?}\nstdout={stdout}\nstderr={stderr}\nerror={e}",
+                        attempt + 1
+                    );
+                }
+            }
+        } else {
+            last_error = format!(
+                "command failed on attempt {}:\nargs={args:?}\nstdout={stdout}\nstderr={stderr}\ncode={code}",
+                attempt + 1
+            );
+        }
+        sleep(std::time::Duration::from_millis(500));
+    }
+    panic!("{last_error}");
 }
 
 fn wait_for_success_json<T, F, P>(mut args_fn: F, predicate: P) -> T
@@ -313,6 +365,28 @@ struct EventCleanup {
     event_id: Option<String>,
 }
 
+struct TempConfigDir {
+    path: PathBuf,
+}
+
+impl TempConfigDir {
+    fn new() -> Self {
+        let path = std::env::temp_dir().join(format!("calx-live-config-{}", unique_suffix()));
+        fs::create_dir_all(&path).unwrap();
+        Self { path }
+    }
+
+    fn as_path(&self) -> &Path {
+        &self.path
+    }
+}
+
+impl Drop for TempConfigDir {
+    fn drop(&mut self) {
+        let _ = fs::remove_dir_all(&self.path);
+    }
+}
+
 impl EventCleanup {
     fn new(event_id: String) -> Self {
         Self {
@@ -370,6 +444,20 @@ struct UpdateJson {
 struct DeleteJson {
     deleted: bool,
     event_id: String,
+}
+
+#[derive(Deserialize)]
+struct TemplateAddJson {
+    created: bool,
+    event_id: String,
+    title: String,
+}
+
+#[derive(Deserialize)]
+struct UndoJson {
+    undone: bool,
+    action: String,
+    event_id: Option<String>,
 }
 
 #[test]
@@ -545,6 +633,53 @@ fn test_live_eventkit_round_trip() {
 
 #[test]
 #[ignore = "requires Calendar permission and CALX_LIVE_TEST_CALENDAR"]
+fn test_live_eventkit_duplicate_round_trip() {
+    let _lock = live_test_lock();
+    let test_calendar = ensure_live_test_ready(&live_test_calendar());
+    let calendar = test_calendar.title().to_string();
+
+    let suffix = unique_suffix();
+    let source_day = live_test_day();
+    let duplicate_day = source_day + Duration::days(1);
+    let title = format!("calx-live-duplicate-{suffix}");
+
+    let add_args = vec![
+        "add".to_string(),
+        "--title".to_string(),
+        title.clone(),
+        "--start".to_string(),
+        fmt_datetime(source_day, 14, 0),
+        "--end".to_string(),
+        fmt_datetime(source_day, 15, 0),
+        "--calendar".to_string(),
+        calendar.clone(),
+        "-o".to_string(),
+        "json".to_string(),
+    ];
+    let created: EventJson = parse_success_json(&add_args);
+    let _source_cleanup = EventCleanup::new(created.id.clone());
+
+    let duplicate_args = vec![
+        "duplicate".to_string(),
+        created.id.clone(),
+        "--start".to_string(),
+        fmt_datetime(duplicate_day, 16, 0),
+        "--calendar".to_string(),
+        calendar.clone(),
+        "-o".to_string(),
+        "json".to_string(),
+    ];
+    let duplicated: EventJson = parse_success_json(&duplicate_args);
+    let _duplicate_cleanup = EventCleanup::new(duplicated.id.clone());
+
+    assert_ne!(duplicated.id, created.id);
+    assert_eq!(duplicated.title, title);
+    assert_eq!(duplicated.calendar, calendar);
+    assert_event_time(&duplicated, duplicate_day, "16:00", "17:00");
+}
+
+#[test]
+#[ignore = "requires Calendar permission and CALX_LIVE_TEST_CALENDAR"]
 fn test_live_eventkit_rejects_invalid_one_sided_updates() {
     let _lock = live_test_lock();
     let test_calendar = ensure_live_test_ready(&live_test_calendar());
@@ -698,6 +833,51 @@ fn test_live_eventkit_all_day_round_trip() {
     let matches: Vec<EventJson> = parse_success_json(&search_args);
     assert_eq!(matches.len(), 1);
     assert_eq!(matches[0].id, created.id);
+}
+
+#[test]
+#[ignore = "requires Calendar permission and CALX_LIVE_TEST_CALENDAR"]
+fn test_live_eventkit_conflicts_round_trip() {
+    let _lock = live_test_lock();
+    let test_calendar = ensure_live_test_ready(&live_test_calendar());
+    let calendar = test_calendar.title().to_string();
+
+    let suffix = unique_suffix();
+    let test_day = live_test_day();
+    let title = format!("calx-live-conflict-{suffix}");
+
+    let add_args = vec![
+        "add".to_string(),
+        "--title".to_string(),
+        title.clone(),
+        "--start".to_string(),
+        fmt_datetime(test_day, 11, 0),
+        "--end".to_string(),
+        fmt_datetime(test_day, 12, 0),
+        "--calendar".to_string(),
+        calendar.clone(),
+        "-o".to_string(),
+        "json".to_string(),
+    ];
+    let created: EventJson = parse_success_json(&add_args);
+    let _cleanup = EventCleanup::new(created.id.clone());
+
+    let conflicts_args = vec![
+        "conflicts".to_string(),
+        "--start".to_string(),
+        fmt_datetime(test_day, 11, 30),
+        "--end".to_string(),
+        fmt_datetime(test_day, 12, 30),
+        "--calendar".to_string(),
+        calendar,
+        "-o".to_string(),
+        "json".to_string(),
+    ];
+    let conflicts: Vec<EventJson> = wait_for_success_json(
+        || conflicts_args.clone(),
+        |events: &Vec<EventJson>| events.iter().any(|event| event.id == created.id),
+    );
+    assert!(conflicts.iter().any(|event| event.id == created.id));
 }
 
 #[test]
@@ -858,4 +1038,171 @@ fn test_live_eventkit_recurring_scope_round_trip() {
         |matches: &Vec<EventJson>| matches.len() == 1,
     );
     assert_eq!(updated_matches.len(), 1);
+}
+
+#[test]
+#[ignore = "requires Calendar permission and CALX_LIVE_TEST_CALENDAR"]
+fn test_live_eventkit_template_round_trip() {
+    let _lock = live_test_lock();
+    let test_calendar = ensure_live_test_ready(&live_test_calendar());
+    let calendar = test_calendar.title().to_string();
+    let config_dir = TempConfigDir::new();
+    let config_path = config_dir.as_path().to_string_lossy().into_owned();
+    let envs = [("CALX_CONFIG_DIR", config_path.as_str())];
+
+    let suffix = unique_suffix();
+    let source_day = live_test_day();
+    let target_day = source_day + Duration::days(2);
+    let title = format!("calx-live-template-source-{suffix}");
+    let template_name = format!("live-template-{suffix}");
+
+    let add_args = vec![
+        "add".to_string(),
+        "--title".to_string(),
+        title.clone(),
+        "--start".to_string(),
+        fmt_datetime(source_day, 15, 0),
+        "--end".to_string(),
+        fmt_datetime(source_day, 16, 0),
+        "--calendar".to_string(),
+        calendar.clone(),
+        "-o".to_string(),
+        "json".to_string(),
+    ];
+    let source: EventJson = parse_success_json_env(&add_args, &envs);
+    let _source_cleanup = EventCleanup::new(source.id.clone());
+
+    let save_args = vec![
+        "template".to_string(),
+        "save".to_string(),
+        template_name.clone(),
+        "--query".to_string(),
+        title.clone(),
+        "--exact".to_string(),
+        "--in-calendar".to_string(),
+        calendar.clone(),
+        "--from".to_string(),
+        fmt_date(source_day),
+        "--to".to_string(),
+        fmt_date(source_day),
+        "-o".to_string(),
+        "json".to_string(),
+    ];
+    let _: serde_json::Value = parse_success_json_env(&save_args, &envs);
+
+    let instantiate_args = vec![
+        "template".to_string(),
+        "add".to_string(),
+        template_name,
+        "--start".to_string(),
+        fmt_datetime(target_day, 17, 0),
+        "--calendar".to_string(),
+        calendar.clone(),
+        "-o".to_string(),
+        "json".to_string(),
+    ];
+    let instantiated_result: TemplateAddJson = parse_success_json_env(&instantiate_args, &envs);
+    assert!(instantiated_result.created);
+    assert_eq!(instantiated_result.title, title);
+
+    let show_args = vec![
+        "show".to_string(),
+        instantiated_result.event_id.clone(),
+        "-o".to_string(),
+        "json".to_string(),
+    ];
+    let instantiated: EventJson = parse_success_json_env(&show_args, &envs);
+    let _instantiated_cleanup = EventCleanup::new(instantiated.id.clone());
+
+    assert_eq!(instantiated.title, title);
+    assert_eq!(instantiated.calendar, calendar);
+    assert_event_time(&instantiated, target_day, "17:00", "18:00");
+}
+
+#[test]
+#[ignore = "requires Calendar permission and CALX_LIVE_TEST_CALENDAR"]
+fn test_live_eventkit_undo_stack_round_trip() {
+    let _lock = live_test_lock();
+    let test_calendar = ensure_live_test_ready(&live_test_calendar());
+    let calendar = test_calendar.title().to_string();
+    let config_dir = TempConfigDir::new();
+    let config_path = config_dir.as_path().to_string_lossy().into_owned();
+    let envs = [("CALX_CONFIG_DIR", config_path.as_str())];
+
+    let suffix = unique_suffix();
+    let test_day = live_test_day();
+    let title = format!("calx-live-undo-{suffix}");
+    let updated_title = format!("calx-live-undo-updated-{suffix}");
+
+    let add_args = vec![
+        "add".to_string(),
+        "--title".to_string(),
+        title.clone(),
+        "--start".to_string(),
+        fmt_datetime(test_day, 18, 0),
+        "--end".to_string(),
+        fmt_datetime(test_day, 19, 0),
+        "--calendar".to_string(),
+        calendar.clone(),
+        "-o".to_string(),
+        "json".to_string(),
+    ];
+    let created: EventJson = parse_success_json_env(&add_args, &envs);
+    let mut cleanup = EventCleanup::new(created.id.clone());
+
+    let update_args = vec![
+        "update".to_string(),
+        created.id.clone(),
+        "--title".to_string(),
+        updated_title.clone(),
+        "-o".to_string(),
+        "json".to_string(),
+    ];
+    let updated: UpdateJson = parse_success_json_env(&update_args, &envs);
+    assert!(updated.updated);
+
+    let undo_args = vec!["undo".to_string(), "-o".to_string(), "json".to_string()];
+    let first_undo: UndoJson = parse_success_json_env(&undo_args, &envs);
+    assert!(first_undo.undone);
+    assert_eq!(first_undo.action, "restore_updated");
+    assert_eq!(first_undo.event_id.as_deref(), Some(created.id.as_str()));
+
+    let show_args = vec![
+        "show".to_string(),
+        created.id.clone(),
+        "-o".to_string(),
+        "json".to_string(),
+    ];
+    let restored: EventJson = wait_for_success_json_env(
+        || show_args.clone(),
+        &envs,
+        |event: &EventJson| event.title == title,
+    );
+    assert_eq!(restored.title, title);
+
+    let second_undo: UndoJson = parse_success_json_env(&undo_args, &envs);
+    assert!(second_undo.undone);
+    assert_eq!(second_undo.action, "delete_created");
+    assert_eq!(second_undo.event_id.as_deref(), Some(created.id.as_str()));
+
+    let search_args = vec![
+        "search".to_string(),
+        title.clone(),
+        "--exact".to_string(),
+        "--calendar".to_string(),
+        calendar,
+        "--from".to_string(),
+        fmt_date(test_day),
+        "--to".to_string(),
+        fmt_date(test_day),
+        "-o".to_string(),
+        "json".to_string(),
+    ];
+    let remaining: Vec<EventJson> = wait_for_success_json_env(
+        || search_args.clone(),
+        &envs,
+        |events: &Vec<EventJson>| events.is_empty(),
+    );
+    assert!(remaining.is_empty());
+    cleanup.disarm();
 }

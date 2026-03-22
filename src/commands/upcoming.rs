@@ -16,6 +16,5 @@ pub fn run(
     let today = Local::now().date_naive();
     let end = today + Duration::days(days as i64);
     let events = store.events(today, end, calendar.as_deref())?;
-    super::events::print_events(events, format, opts);
-    Ok(())
+    super::events::print_events(events, format, opts)
 }

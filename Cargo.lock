@@ -103,6 +103,7 @@ dependencies = [
  "clap",
  "clap_complete",
  "csv",
+ "libc",
  "objc2",
  "objc2-event-kit",
  "objc2-foundation",

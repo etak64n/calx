@@ -10,7 +10,9 @@ It lets you browse, search, create, update, and delete calendar events from the 
 - Natural language date input like `tomorrow 3pm` or `next friday`
 - Fast event listing, filtering, and search
 - Create, update, show, and delete events from the CLI
-- Export event data as JSON, YAML, CSV, TSV, table, or ICS
+- Duplicate events, save reusable templates, and undo the last supported change
+- Conflict checks and free-slot discovery for scheduling workflows
+- Export event data as JSON, YAML, CSV, TSV, or table
 - Single binary with no runtime dependencies
 
 ## Install
@@ -39,7 +41,7 @@ calx upcoming
 # List calendars
 calx calendars
 
-# Show the next event
+# Show the next future timed event within the next 30 days
 calx next
 ```
 
@@ -55,14 +57,29 @@ calx search "meeting"
 # Create an event
 calx add --title "Meeting" --start "2026-03-20 14:00" --end "2026-03-20 15:00"
 
+# Check conflicts before scheduling
+calx conflicts --start "2026-03-20 14:00" --end "2026-03-20 15:00"
+
 # Update an event
 calx update <event-id> --title "New Title" --start "tomorrow 2pm"
+
+# Duplicate an event
+calx duplicate <event-id> --start "2026-03-27 14:00"
 
 # Show full event details
 calx show <event-id>
 
 # Delete an event
 calx delete <event-id>
+
+# Save and reuse a template
+calx template save weekly-1on1 --query "Weekly 1:1" --exact
+# Overwrite an existing template name
+calx template save weekly-1on1 --query "Weekly 1:1" --exact --force
+calx template add weekly-1on1 --start "next friday 15:00"
+
+# Undo the last supported change
+calx undo
 ```
 
 ## Natural Language Dates
@@ -93,7 +110,6 @@ calx today -o yaml
 calx today -o table
 calx today -o csv
 calx today -o tsv
-calx today -o ics
 ```
 
 ## Permissions

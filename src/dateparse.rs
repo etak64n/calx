@@ -22,7 +22,7 @@ pub fn parse_datetime(s: &str) -> Option<NaiveDateTime> {
 }
 
 /// Parse a date-only string with natural language support.
-/// Rejects time-only inputs like "15:30" or "3pm".
+/// Rejects any explicit time component.
 pub fn parse_date(s: &str) -> Option<NaiveDate> {
     let s = s.trim();
 
@@ -30,26 +30,8 @@ pub fn parse_date(s: &str) -> Option<NaiveDate> {
         return Some(d);
     }
 
-    // Reject time-only input (would incorrectly resolve to today)
-    // Check both "3pm" and "3 pm" forms
-    let s_lower = s.to_lowercase();
-    let s_nospace = s_lower.replace(' ', "");
-    if parse_time_str(&s_nospace).is_some()
-        && !s_lower.starts_with("today")
-        && !s_lower.starts_with("tomorrow")
-        && !s_lower.starts_with("yesterday")
-        && !s_lower.starts_with("next ")
-        && !s_lower.starts_with("in ")
-    {
-        // If the entire input resolves to just a time, reject it
-        let has_date_keyword = s_lower.contains("today")
-            || s_lower.contains("tomorrow")
-            || s_lower.contains("yesterday")
-            || s_lower.contains("next")
-            || s_lower.contains("in ");
-        if !has_date_keyword {
-            return None;
-        }
+    if contains_explicit_time(s) {
+        return None;
     }
 
     let today = Local::now().date_naive();
@@ -105,6 +87,16 @@ fn contains_explicit_time(s: &str) -> bool {
     let lower = s.to_lowercase();
     if parse_time_str(&lower).is_some() {
         return true;
+    }
+
+    let tokens: Vec<&str> = lower.split_whitespace().collect();
+    for len in [1_usize, 2] {
+        if tokens.len() >= len {
+            let candidate = tokens[tokens.len() - len..].join(" ");
+            if parse_time_str(&candidate).is_some() {
+                return true;
+            }
+        }
     }
 
     if let Some((_, tail)) = lower.rsplit_once(' ') {
@@ -165,20 +157,23 @@ fn parse_japanese(s: &str, today: NaiveDate) -> Option<(Option<NaiveDate>, Naive
 
 fn parse_english(s: &str, today: NaiveDate) -> Option<(Option<NaiveDate>, NaiveTime)> {
     let default_time = NaiveTime::from_hms_opt(0, 0, 0).unwrap();
-    let parts: Vec<&str> = s.splitn(3, ' ').collect();
+    let parts: Vec<&str> = s.split_whitespace().collect();
 
-    // "tomorrow 3pm", "today 14:00"
-    let (date_str, time_str) = if parts.len() >= 2 {
-        // Check if last part is a time
-        if parse_time_str(parts.last().unwrap()).is_some() {
-            let date_part = parts[..parts.len() - 1].join(" ");
-            (date_part, Some(*parts.last().unwrap()))
-        } else {
-            (s.to_string(), None)
-        }
-    } else {
-        (s.to_string(), None)
-    };
+    // "tomorrow 3pm", "today 3 pm", "next friday 9 am"
+    let (date_str, time_str) = [2_usize, 1]
+        .into_iter()
+        .find_map(|time_len| {
+            if parts.len() <= time_len {
+                return None;
+            }
+            let candidate = parts[parts.len() - time_len..].join(" ");
+            parse_time_str(&candidate)
+                .map(|_| (parts[..parts.len() - time_len].join(" "), candidate))
+        })
+        .map_or_else(
+            || (s.to_string(), None),
+            |(date_part, time_part)| (date_part, Some(time_part)),
+        );
 
     let date = match date_str.as_str() {
         "today" => Some(today),
@@ -196,7 +191,10 @@ fn parse_english(s: &str, today: NaiveDate) -> Option<(Option<NaiveDate>, NaiveT
 
     date.as_ref()?;
 
-    let time = time_str.and_then(parse_time_str).unwrap_or(default_time);
+    let time = time_str
+        .as_deref()
+        .and_then(parse_time_str)
+        .unwrap_or(default_time);
 
     Some((date, time))
 }
@@ -365,6 +363,8 @@ mod tests {
         assert!(parse_date("11am").is_none());
         assert!(parse_date("3 pm").is_none());
         assert!(parse_date("11 am").is_none());
+        assert!(parse_date("today 3pm").is_none());
+        assert!(parse_date("today 3 pm").is_none());
     }
 
     #[test]
@@ -437,6 +437,13 @@ mod tests {
     }
 
     #[test]
+    fn test_english_today_with_spaced_time() {
+        let dt = parse_datetime("today 3 pm").unwrap();
+        assert_eq!(dt.date(), Local::now().date_naive());
+        assert_eq!(dt.hour(), 15);
+    }
+
+    #[test]
     fn test_english_tomorrow_with_24h_time() {
         let dt = parse_datetime("tomorrow 14:00").unwrap();
         assert_eq!(dt.hour(), 14);
@@ -452,6 +459,13 @@ mod tests {
     #[test]
     fn test_english_next_weekday_with_time() {
         let dt = parse_datetime("next friday 9am").unwrap();
+        assert_eq!(dt.weekday(), Weekday::Fri);
+        assert_eq!(dt.hour(), 9);
+    }
+
+    #[test]
+    fn test_english_next_weekday_with_spaced_time() {
+        let dt = parse_datetime("next friday 9 am").unwrap();
         assert_eq!(dt.weekday(), Weekday::Fri);
         assert_eq!(dt.hour(), 9);
     }

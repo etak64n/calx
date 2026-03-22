@@ -9,8 +9,9 @@ use serde::Serialize;
 use std::sync::mpsc;
 use std::time::Duration;
 
-#[derive(Serialize)]
+#[derive(Clone, Serialize)]
 pub struct CalendarInfo {
+    pub id: String,
     pub title: String,
     pub source: String,
 }
@@ -22,6 +23,7 @@ pub struct EventInfo {
     pub start: DateTime<Local>,
     pub end: DateTime<Local>,
     pub calendar: String,
+    pub calendar_id: String,
     pub location: Option<String>,
     pub url: Option<String>,
     pub notes: Option<String>,
@@ -33,6 +35,8 @@ pub struct EventInfo {
     pub modified: Option<DateTime<Local>>,
     pub recurring: bool,
     pub recurrence: Option<String>,
+    pub recurrence_rule: Option<RecurrenceRuleInfo>,
+    pub alerts: Vec<i64>,
 }
 
 #[derive(Clone, Serialize, serde::Deserialize)]
@@ -46,10 +50,47 @@ pub struct CalendarStore {
     store: Retained<EKEventStore>,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, serde::Deserialize)]
 pub enum RecurrenceScope {
     This,
     Future,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum FieldUpdate<'a> {
+    Keep,
+    Set(&'a str),
+    Clear,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum AlertUpdate<'a> {
+    Keep,
+    Set(&'a [i64]),
+    Clear,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, serde::Deserialize)]
+pub struct RecurrenceRuleInfo {
+    pub frequency: String,
+    pub interval: u32,
+    pub count: Option<u32>,
+    pub until: Option<NaiveDate>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, serde::Deserialize)]
+pub struct EventDraft {
+    pub title: String,
+    pub start: DateTime<Local>,
+    pub end: DateTime<Local>,
+    pub calendar: String,
+    pub calendar_id: String,
+    pub location: Option<String>,
+    pub url: Option<String>,
+    pub notes: Option<String>,
+    pub all_day: bool,
+    pub alerts: Vec<i64>,
+    pub recurrence_rule: Option<RecurrenceRuleInfo>,
 }
 
 impl CalendarStore {
@@ -93,11 +134,12 @@ impl CalendarStore {
 
         for i in 0..count {
             let cal = cals.objectAtIndex(i);
+            let id = unsafe { cal.calendarIdentifier() }.to_string();
             let title = unsafe { cal.title() }.to_string();
             let source = unsafe { cal.source() }
                 .map(|s| unsafe { s.title() }.to_string())
                 .unwrap_or_default();
-            result.push(CalendarInfo { title, source });
+            result.push(CalendarInfo { id, title, source });
         }
         result
     }
@@ -135,12 +177,10 @@ impl CalendarStore {
             let event = events.objectAtIndex(i);
 
             let title = unsafe { event.title() }.to_string();
-            let cal_name = unsafe { event.calendar() }
-                .map(|c| unsafe { c.title() }.to_string())
-                .unwrap_or_default();
+            let (cal_name, cal_id) = event_calendar_ref(&event);
 
-            if let Some(name) = calendar_name {
-                if cal_name != name {
+            if let Some(spec) = calendar_name {
+                if cal_name != spec && cal_id != spec {
                     continue;
                 }
             }
@@ -180,6 +220,8 @@ impl CalendarStore {
             let modified = unsafe { event.lastModifiedDate() }.map(nsdate_to_datetime);
             let recurring = event_is_recurring(&event);
             let recurrence = recurrence_summary(&event);
+            let recurrence_rule = recurrence_rule_info(&event);
+            let alerts = alarm_minutes_before(&event, start);
 
             result.push(EventInfo {
                 id,
@@ -187,6 +229,7 @@ impl CalendarStore {
                 start,
                 end,
                 calendar: cal_name,
+                calendar_id: cal_id,
                 location,
                 url,
                 notes,
@@ -198,6 +241,8 @@ impl CalendarStore {
                 modified,
                 recurring,
                 recurrence,
+                recurrence_rule,
+                alerts,
             });
         }
 
@@ -220,91 +265,23 @@ impl CalendarStore {
         repeat_interval: Option<u32>,
         alerts: &[i64],
     ) -> Result<String, AppError> {
-        let event = unsafe { EKEvent::eventWithEventStore(&self.store) };
-
-        let ns_title = NSString::from_str(title);
-        unsafe { event.setTitle(Some(&ns_title)) };
-
-        let start_ts = Local
-            .from_local_datetime(&start)
-            .earliest()
-            .ok_or_else(|| AppError::InvalidDate(start.to_string()))?
-            .timestamp() as f64;
-        let end_ts = Local
-            .from_local_datetime(&end)
-            .earliest()
-            .ok_or_else(|| AppError::InvalidDate(end.to_string()))?
-            .timestamp() as f64;
-
-        let start_date = NSDate::dateWithTimeIntervalSince1970(start_ts);
-        let end_date = NSDate::dateWithTimeIntervalSince1970(end_ts);
-
-        unsafe {
-            event.setStartDate(Some(&start_date));
-            event.setEndDate(Some(&end_date));
-            event.setAllDay(all_day);
-        };
-
-        if let Some(loc) = location {
-            let ns = NSString::from_str(loc);
-            unsafe { event.setLocation(Some(&ns)) };
-        }
-
-        if let Some(u) = url {
-            let ns_url = NSURL::URLWithString(&NSString::from_str(u));
-            if let Some(ns_url) = ns_url {
-                unsafe { event.setURL(Some(&ns_url)) };
-            }
-        }
-
-        if let Some(text) = notes {
-            let ns_notes = NSString::from_str(text);
-            unsafe { event.setNotes(Some(&ns_notes)) };
-        }
-
-        if let Some(name) = calendar_name {
-            let cal = self.find_calendar(name)?;
-            unsafe { event.setCalendar(Some(&cal)) };
-        } else {
-            let default_cal = unsafe { self.store.defaultCalendarForNewEvents() };
-            if let Some(cal) = default_cal {
-                unsafe { event.setCalendar(Some(&cal)) };
-            }
-        }
-
-        if let Some(freq_str) = repeat {
-            let freq = match freq_str {
-                "daily" => EKRecurrenceFrequency::Daily,
-                "weekly" => EKRecurrenceFrequency::Weekly,
-                "monthly" => EKRecurrenceFrequency::Monthly,
-                "yearly" => EKRecurrenceFrequency::Yearly,
-                _ => {
-                    return Err(AppError::InvalidArgument(format!(
-                        "Unknown repeat frequency: {freq_str}. Use daily, weekly, monthly, or yearly."
-                    )));
-                }
-            };
-            let end = repeat_count
-                .map(|n| unsafe { EKRecurrenceEnd::recurrenceEndWithOccurrenceCount(n as usize) });
-            let interval = repeat_interval.unwrap_or(1) as isize;
-            let rule = unsafe {
-                EKRecurrenceRule::initRecurrenceWithFrequency_interval_end(
-                    EKRecurrenceRule::alloc(),
-                    freq,
-                    interval,
-                    end.as_deref(),
-                )
-            };
-            unsafe {
-                event.addRecurrenceRule(&rule);
-            }
-        }
-
-        for &minutes in alerts {
-            let offset = -(minutes * 60) as f64;
-            let alarm = unsafe { EKAlarm::alarmWithRelativeOffset(offset) };
-            unsafe { event.addAlarm(&alarm) };
-        }
+        validate_repeat_configuration(repeat, repeat_count, repeat_interval)?;
+        validate_alert_minutes(alerts)?;
+        let recurrence_rule = recurrence_spec_from_inputs(repeat, repeat_count, repeat_interval)?;
+        let start_local = localize_datetime(start)?;
+        let end_local = localize_datetime(end)?;
+        let event = self.build_event(
+            title,
+            start_local,
+            end_local,
+            calendar_name,
+            location,
+            url,
+            notes,
+            all_day,
+            recurrence_rule.as_ref(),
+            alerts,
+        )?;
 
         unsafe {
             self.store
@@ -319,15 +296,58 @@ impl CalendarStore {
         Ok(event_id)
     }
 
+    pub fn event_draft(
+        &self,
+        event_id: &str,
+        selected_start: DateTime<Local>,
+    ) -> Result<EventDraft, AppError> {
+        let event = self.find_event_instance(event_id, selected_start)?;
+        Ok(event_draft_from_event(&event))
+    }
+
+    pub fn create_event_from_draft(
+        &self,
+        draft: &EventDraft,
+        title_override: Option<&str>,
+        start: DateTime<Local>,
+        end: DateTime<Local>,
+        calendar_override: Option<&str>,
+        keep_recurrence: bool,
+    ) -> Result<EventInfo, AppError> {
+        let event = self.build_event(
+            title_override.unwrap_or(&draft.title),
+            start,
+            end,
+            calendar_override.or(Some(draft.calendar_id.as_str())),
+            draft.location.as_deref(),
+            draft.url.as_deref(),
+            draft.notes.as_deref(),
+            draft.all_day,
+            keep_recurrence
+                .then_some(draft.recurrence_rule.as_ref())
+                .flatten(),
+            &draft.alerts,
+        )?;
+
+        unsafe {
+            self.store
+                .saveEvent_span_error(&event, EKSpan::ThisEvent)
+                .map_err(|e| AppError::EventKit(e.to_string()))?;
+        }
+
+        let event_id = unsafe { event.eventIdentifier() }
+            .map(|id| id.to_string())
+            .unwrap_or_default();
+        self.get_event(&event_id)
+    }
+
     pub fn get_event(&self, event_id: &str) -> Result<EventInfo, AppError> {
         let ns_id = NSString::from_str(event_id);
         let event = unsafe { self.store.eventWithIdentifier(&ns_id) }
             .ok_or_else(|| AppError::EventNotFound(event_id.to_string()))?;
 
         let title = unsafe { event.title() }.to_string();
-        let calendar = unsafe { event.calendar() }
-            .map(|c| unsafe { c.title() }.to_string())
-            .unwrap_or_default();
+        let (calendar, calendar_id) = event_calendar_ref(&event);
         let start = nsdate_to_datetime(unsafe { event.startDate() });
         let all_day = unsafe { event.isAllDay() };
         let end = normalize_all_day_end(nsdate_to_datetime(unsafe { event.endDate() }), all_day);
@@ -361,6 +381,8 @@ impl CalendarStore {
         let modified = unsafe { event.lastModifiedDate() }.map(nsdate_to_datetime);
         let recurring = event_is_recurring(&event);
         let recurrence = recurrence_summary(&event);
+        let recurrence_rule = recurrence_rule_info(&event);
+        let alerts = alarm_minutes_before(&event, start);
 
         Ok(EventInfo {
             id,
@@ -368,6 +390,7 @@ impl CalendarStore {
             start,
             end,
             calendar,
+            calendar_id,
             location,
             url,
             notes,
@@ -379,6 +402,8 @@ impl CalendarStore {
             modified,
             recurring,
             recurrence,
+            recurrence_rule,
+            alerts,
         })
     }
 
@@ -392,10 +417,7 @@ impl CalendarStore {
     ) -> Result<Vec<EventInfo>, AppError> {
         let events = self.events(from, to, calendar_name)?;
         let query_lower = query.to_lowercase();
-        Ok(events
-            .into_iter()
-            .filter(|e| event_matches_query(e, &query_lower, exact))
-            .collect())
+        Ok(filter_search_matches(events, &query_lower, exact))
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -406,17 +428,20 @@ impl CalendarStore {
         title: Option<&str>,
         start: Option<NaiveDateTime>,
         end: Option<NaiveDateTime>,
-        location: Option<&str>,
-        url: Option<&str>,
-        notes: Option<&str>,
+        location: FieldUpdate<'_>,
+        url: FieldUpdate<'_>,
+        notes: FieldUpdate<'_>,
+        alerts: AlertUpdate<'_>,
         calendar_name: Option<&str>,
         all_day: Option<bool>,
         scope: Option<RecurrenceScope>,
-    ) -> Result<(), AppError> {
+    ) -> Result<EventInfo, AppError> {
         let event = self.find_event_instance(event_id, selected_start)?;
+        let current_all_day = unsafe { event.isAllDay() };
         let current_start = nsdate_to_datetime(unsafe { event.startDate() });
         let current_end = nsdate_to_datetime(unsafe { event.endDate() });
-        let updated_all_day = all_day.unwrap_or_else(|| unsafe { event.isAllDay() });
+        let updated_all_day = all_day.unwrap_or(current_all_day);
+        validate_all_day_transition(current_all_day, updated_all_day, start, end)?;
         let (updated_start, updated_end) =
             validate_updated_time_range(current_start, current_end, start, end, updated_all_day)?;
 
@@ -425,16 +450,22 @@ impl CalendarStore {
             unsafe { event.setTitle(Some(&ns)) };
         }
 
-        if let Some(loc) = location {
-            let ns = NSString::from_str(loc);
-            unsafe { event.setLocation(Some(&ns)) };
+        match location {
+            FieldUpdate::Keep => {}
+            FieldUpdate::Set(loc) => {
+                let ns = NSString::from_str(loc);
+                unsafe { event.setLocation(Some(&ns)) };
+            }
+            FieldUpdate::Clear => unsafe { event.setLocation(None) },
         }
 
-        if let Some(u) = url {
-            let ns_url = NSURL::URLWithString(&NSString::from_str(u));
-            if let Some(ns_url) = ns_url {
+        match url {
+            FieldUpdate::Keep => {}
+            FieldUpdate::Set(u) => {
+                let ns_url = parse_nsurl(u)?;
                 unsafe { event.setURL(Some(&ns_url)) };
             }
+            FieldUpdate::Clear => unsafe { event.setURL(None) },
         }
 
         if start.is_some() || end.is_some() || all_day.is_some() {
@@ -448,9 +479,19 @@ impl CalendarStore {
             };
         }
 
-        if let Some(n) = notes {
-            let ns = NSString::from_str(n);
-            unsafe { event.setNotes(Some(&ns)) };
+        match notes {
+            FieldUpdate::Keep => {}
+            FieldUpdate::Set(n) => {
+                let ns = NSString::from_str(n);
+                unsafe { event.setNotes(Some(&ns)) };
+            }
+            FieldUpdate::Clear => unsafe { event.setNotes(None) },
+        }
+
+        match alerts {
+            AlertUpdate::Keep => {}
+            AlertUpdate::Set(minutes) => apply_alerts(&event, minutes)?,
+            AlertUpdate::Clear => apply_alerts(&event, &[])?,
         }
 
         if let Some(name) = calendar_name {
@@ -467,7 +508,77 @@ impl CalendarStore {
                 .saveEvent_span_error(&event, recurrence_span(&event, scope)?)
                 .map_err(|e| AppError::EventKit(e.to_string()))?;
         }
-        Ok(())
+        let updated_id = unsafe { event.eventIdentifier() }
+            .map(|id| id.to_string())
+            .unwrap_or_else(|| event_id.to_string());
+        self.get_event(&updated_id)
+    }
+
+    pub fn restore_event_from_draft(
+        &self,
+        event_id: &str,
+        selected_start: DateTime<Local>,
+        scope: Option<RecurrenceScope>,
+        draft: &EventDraft,
+    ) -> Result<EventInfo, AppError> {
+        let event = self.find_event_instance(event_id, selected_start)?;
+        let save_span = recurrence_save_span(event_is_recurring(&event), scope)?;
+        let calendar = self.find_calendar(draft.calendar_id.as_str())?;
+        let parsed_url = draft.url.as_deref().map(parse_nsurl).transpose()?;
+
+        if !draft.all_day && draft.end <= draft.start {
+            return Err(AppError::InvalidDate(
+                "end time must be after start time".to_string(),
+            ));
+        }
+
+        let (event_start, event_end) = eventkit_update_range(draft.start, draft.end, draft.all_day);
+        let start_date = datetime_to_nsdate(event_start);
+        let end_date = datetime_to_nsdate(event_end);
+
+        let title = NSString::from_str(&draft.title);
+        unsafe { event.setTitle(Some(&title)) };
+        unsafe {
+            event.setStartDate(Some(&start_date));
+            event.setEndDate(Some(&end_date));
+            event.setAllDay(draft.all_day);
+            event.setCalendar(Some(&calendar));
+        }
+
+        match &draft.location {
+            Some(location) => {
+                let ns = NSString::from_str(location);
+                unsafe { event.setLocation(Some(&ns)) };
+            }
+            None => unsafe { event.setLocation(None) },
+        }
+
+        match parsed_url {
+            Some(url) => unsafe { event.setURL(Some(&url)) },
+            None => unsafe { event.setURL(None) },
+        }
+
+        match &draft.notes {
+            Some(notes) => {
+                let ns = NSString::from_str(notes);
+                unsafe { event.setNotes(Some(&ns)) };
+            }
+            None => unsafe { event.setNotes(None) },
+        }
+
+        apply_alerts(&event, &draft.alerts)?;
+        apply_recurrence_rule(&event, draft.recurrence_rule.as_ref(), draft.all_day)?;
+
+        unsafe {
+            self.store
+                .saveEvent_span_error(&event, save_span)
+                .map_err(|e| AppError::EventKit(e.to_string()))?;
+        }
+
+        let restored_id = unsafe { event.eventIdentifier() }
+            .map(|id| id.to_string())
+            .unwrap_or_else(|| event_id.to_string());
+        self.get_event(&restored_id)
     }
 
     pub fn delete_event(
@@ -502,7 +613,7 @@ impl CalendarStore {
 
         Ok(events
             .into_iter()
-            .filter(|e| !e.all_day && e.start < end_local && e.end > start_local)
+            .filter(|e| event_conflicts_range(e, start_local, end_local))
             .collect())
     }
 
@@ -517,65 +628,24 @@ impl CalendarStore {
         calendar_name: Option<&str>,
     ) -> Result<Vec<FreeSlot>, AppError> {
         let events = self.events(from, to, calendar_name)?;
-
-        let day_start = after_time.unwrap_or(chrono::NaiveTime::from_hms_opt(9, 0, 0).unwrap());
-        let day_end = before_time.unwrap_or(chrono::NaiveTime::from_hms_opt(17, 0, 0).unwrap());
-        let min_dur = chrono::Duration::minutes(min_duration_mins as i64);
-
-        let mut slots = Vec::new();
-        let mut current_date = from;
-
-        while current_date <= to {
-            let window_start = Local
-                .from_local_datetime(&current_date.and_time(day_start))
-                .earliest()
-                .unwrap_or_else(Local::now);
-            let window_end = Local
-                .from_local_datetime(&current_date.and_time(day_end))
-                .earliest()
-                .unwrap_or_else(Local::now);
-
-            // Get events for this day, sorted by start
-            let mut day_events: Vec<&EventInfo> = events
-                .iter()
-                .filter(|e| {
-                    !e.all_day
-                        && e.start.date_naive() == current_date
-                        && e.end > window_start
-                        && e.start < window_end
-                })
-                .collect();
-            day_events.sort_by_key(|e| e.start);
-
-            let mut cursor = window_start;
-            for ev in &day_events {
-                let ev_start = ev.start.max(window_start);
-                if ev_start > cursor && (ev_start - cursor) >= min_dur {
-                    slots.push(FreeSlot {
-                        start: cursor,
-                        end: ev_start,
-                        duration_mins: (ev_start - cursor).num_minutes() as u32,
-                    });
-                }
-                cursor = cursor.max(ev.end);
-            }
-            if window_end > cursor && (window_end - cursor) >= min_dur {
-                slots.push(FreeSlot {
-                    start: cursor,
-                    end: window_end,
-                    duration_mins: (window_end - cursor).num_minutes() as u32,
-                });
-            }
-
-            current_date += chrono::Duration::days(1);
-        }
-
-        Ok(slots)
+        Ok(calculate_free_slots(
+            &events,
+            from,
+            to,
+            after_time,
+            before_time,
+            min_duration_mins,
+        ))
     }
 
-    pub fn default_calendar_name(&self) -> Option<String> {
-        unsafe { self.store.defaultCalendarForNewEvents() }
-            .map(|cal| unsafe { cal.title() }.to_string())
+    pub fn default_calendar(&self) -> Option<CalendarInfo> {
+        unsafe { self.store.defaultCalendarForNewEvents() }.map(|cal| CalendarInfo {
+            id: unsafe { cal.calendarIdentifier() }.to_string(),
+            title: unsafe { cal.title() }.to_string(),
+            source: unsafe { cal.source() }
+                .map(|s| unsafe { s.title() }.to_string())
+                .unwrap_or_default(),
+        })
     }
 
     pub fn is_calendar_writable(&self, name: &str) -> bool {
@@ -583,8 +653,7 @@ impl CalendarStore {
         let count = cals.count();
         for i in 0..count {
             let cal = cals.objectAtIndex(i);
-            let title = unsafe { cal.title() }.to_string();
-            if title == name {
+            if calendar_matches(&cal, name) {
                 return unsafe { cal.allowsContentModifications() };
             }
         }
@@ -592,13 +661,13 @@ impl CalendarStore {
     }
 
     fn find_calendar(&self, name: &str) -> Result<Retained<EKCalendar>, AppError> {
+        let resolved_id = resolve_calendar_identifier(name, &self.calendars())?;
         let cals = unsafe { self.store.calendarsForEntityType(EKEntityType::Event) };
         let count = cals.count();
 
         for i in 0..count {
             let cal = cals.objectAtIndex(i);
-            let title = unsafe { cal.title() }.to_string();
-            if title == name {
+            if unsafe { cal.calendarIdentifier() }.to_string() == resolved_id {
                 return Ok(cal.clone());
             }
         }
@@ -645,6 +714,69 @@ impl CalendarStore {
         unsafe { self.store.eventWithIdentifier(&ns_id) }
             .ok_or_else(|| AppError::EventNotFound(event_id.to_string()))
     }
+
+    #[allow(clippy::too_many_arguments)]
+    fn build_event(
+        &self,
+        title: &str,
+        start: DateTime<Local>,
+        end: DateTime<Local>,
+        calendar_name: Option<&str>,
+        location: Option<&str>,
+        url: Option<&str>,
+        notes: Option<&str>,
+        all_day: bool,
+        recurrence_rule: Option<&RecurrenceRuleInfo>,
+        alerts: &[i64],
+    ) -> Result<Retained<EKEvent>, AppError> {
+        if !all_day && end <= start {
+            return Err(AppError::InvalidDate(
+                "end time must be after start time".to_string(),
+            ));
+        }
+
+        let event = unsafe { EKEvent::eventWithEventStore(&self.store) };
+        let ns_title = NSString::from_str(title);
+        unsafe { event.setTitle(Some(&ns_title)) };
+
+        let start_date = datetime_to_nsdate(start);
+        let end_date = datetime_to_nsdate(end);
+        unsafe {
+            event.setStartDate(Some(&start_date));
+            event.setEndDate(Some(&end_date));
+            event.setAllDay(all_day);
+        }
+
+        if let Some(loc) = location {
+            let ns = NSString::from_str(loc);
+            unsafe { event.setLocation(Some(&ns)) };
+        }
+
+        if let Some(u) = url {
+            let ns_url = parse_nsurl(u)?;
+            unsafe { event.setURL(Some(&ns_url)) };
+        }
+
+        if let Some(text) = notes {
+            let ns_notes = NSString::from_str(text);
+            unsafe { event.setNotes(Some(&ns_notes)) };
+        }
+
+        let calendar = match calendar_name {
+            Some(name) => self.find_calendar(name)?,
+            None => unsafe { self.store.defaultCalendarForNewEvents() }.ok_or_else(|| {
+                AppError::InvalidArgument(
+                    "No default calendar is configured. Use --calendar.".to_string(),
+                )
+            })?,
+        };
+        unsafe { event.setCalendar(Some(&calendar)) };
+
+        apply_recurrence_rule(&event, recurrence_rule, all_day)?;
+        apply_alerts(&event, alerts)?;
+
+        Ok(event)
+    }
 }
 
 fn localize_datetime(dt: NaiveDateTime) -> Result<DateTime<Local>, AppError> {
@@ -662,6 +794,75 @@ fn datetime_to_nsdate(dt: DateTime<Local>) -> Retained<NSDate> {
     NSDate::dateWithTimeIntervalSince1970(dt.timestamp() as f64)
 }
 
+pub(crate) fn validate_url_string(url: &str) -> Result<(), AppError> {
+    parse_nsurl(url).map(|_| ())
+}
+
+fn validate_repeat_configuration(
+    repeat: Option<&str>,
+    repeat_count: Option<u32>,
+    repeat_interval: Option<u32>,
+) -> Result<(), AppError> {
+    if repeat.is_none() {
+        if repeat_count.is_some() {
+            return Err(AppError::InvalidArgument(
+                "--repeat-count requires --repeat".to_string(),
+            ));
+        }
+        if repeat_interval.is_some() {
+            return Err(AppError::InvalidArgument(
+                "--repeat-interval requires --repeat".to_string(),
+            ));
+        }
+        return Ok(());
+    }
+
+    if repeat_count == Some(0) {
+        return Err(AppError::InvalidArgument(
+            "--repeat-count must be greater than 0".to_string(),
+        ));
+    }
+    if repeat_interval == Some(0) {
+        return Err(AppError::InvalidArgument(
+            "--repeat-interval must be greater than 0".to_string(),
+        ));
+    }
+
+    Ok(())
+}
+
+fn validate_alert_minutes(alerts: &[i64]) -> Result<(), AppError> {
+    if let Some(minutes) = alerts.iter().find(|&&minutes| minutes < 0) {
+        return Err(AppError::InvalidArgument(format!(
+            "--alert expects minutes before the event; got {minutes}"
+        )));
+    }
+    Ok(())
+}
+
+fn recurrence_spec_from_inputs(
+    repeat: Option<&str>,
+    repeat_count: Option<u32>,
+    repeat_interval: Option<u32>,
+) -> Result<Option<RecurrenceRuleInfo>, AppError> {
+    validate_repeat_configuration(repeat, repeat_count, repeat_interval)?;
+    let Some(repeat) = repeat else {
+        return Ok(None);
+    };
+
+    Ok(Some(RecurrenceRuleInfo {
+        frequency: repeat.to_string(),
+        interval: repeat_interval.unwrap_or(1),
+        count: repeat_count,
+        until: None,
+    }))
+}
+
+fn parse_nsurl(url: &str) -> Result<Retained<NSURL>, AppError> {
+    NSURL::URLWithString(&NSString::from_str(url))
+        .ok_or_else(|| AppError::InvalidArgument(format!("Invalid URL: {url}")))
+}
+
 fn eventkit_update_range(
     start: DateTime<Local>,
     end: DateTime<Local>,
@@ -672,6 +873,78 @@ fn eventkit_update_range(
     } else {
         (start, end)
     }
+}
+
+fn calculate_free_slots(
+    events: &[EventInfo],
+    from: NaiveDate,
+    to: NaiveDate,
+    after_time: Option<chrono::NaiveTime>,
+    before_time: Option<chrono::NaiveTime>,
+    min_duration_mins: u32,
+) -> Vec<FreeSlot> {
+    let day_start = after_time.unwrap_or(chrono::NaiveTime::from_hms_opt(9, 0, 0).unwrap());
+    let day_end = before_time.unwrap_or(chrono::NaiveTime::from_hms_opt(17, 0, 0).unwrap());
+    let min_dur = chrono::Duration::minutes(min_duration_mins as i64);
+
+    let mut slots = Vec::new();
+    let mut current_date = from;
+
+    while current_date <= to {
+        let window_start = Local
+            .from_local_datetime(&current_date.and_time(day_start))
+            .earliest()
+            .unwrap_or_else(Local::now);
+        let window_end = Local
+            .from_local_datetime(&current_date.and_time(day_end))
+            .earliest()
+            .unwrap_or_else(Local::now);
+
+        let mut blocked: Vec<(DateTime<Local>, DateTime<Local>)> = events
+            .iter()
+            .filter_map(|event| blocked_interval_for_window(event, window_start, window_end))
+            .collect();
+        blocked.sort_by_key(|(start, _)| *start);
+
+        let mut cursor = window_start;
+        for (block_start, block_end) in blocked {
+            if block_start > cursor && (block_start - cursor) >= min_dur {
+                slots.push(FreeSlot {
+                    start: cursor,
+                    end: block_start,
+                    duration_mins: (block_start - cursor).num_minutes() as u32,
+                });
+            }
+            cursor = cursor.max(block_end);
+        }
+
+        if window_end > cursor && (window_end - cursor) >= min_dur {
+            slots.push(FreeSlot {
+                start: cursor,
+                end: window_end,
+                duration_mins: (window_end - cursor).num_minutes() as u32,
+            });
+        }
+
+        current_date += chrono::Duration::days(1);
+    }
+
+    slots
+}
+
+fn validate_all_day_transition(
+    current_all_day: bool,
+    updated_all_day: bool,
+    start: Option<NaiveDateTime>,
+    end: Option<NaiveDateTime>,
+) -> Result<(), AppError> {
+    if current_all_day && !updated_all_day && (start.is_none() || end.is_none()) {
+        return Err(AppError::InvalidArgument(
+            "Converting an all-day event to a timed event requires both --start and --end."
+                .to_string(),
+        ));
+    }
+    Ok(())
 }
 
 fn validate_updated_time_range(
@@ -717,7 +990,7 @@ fn validate_updated_time_range(
         None => current_end,
     };
 
-    if updated_end < updated_start {
+    if updated_end <= updated_start {
         return Err(AppError::InvalidDate(
             "end time must be after start time".to_string(),
         ));
@@ -755,7 +1028,14 @@ fn normalize_all_day_end(end: DateTime<Local>, all_day: bool) -> DateTime<Local>
 }
 
 fn recurrence_span(event: &EKEvent, scope: Option<RecurrenceScope>) -> Result<EKSpan, AppError> {
-    if !event_is_recurring(event) {
+    recurrence_save_span(event_is_recurring(event), scope)
+}
+
+fn recurrence_save_span(
+    is_recurring: bool,
+    scope: Option<RecurrenceScope>,
+) -> Result<EKSpan, AppError> {
+    if !is_recurring {
         return Ok(EKSpan::ThisEvent);
     }
 
@@ -800,20 +1080,257 @@ fn recurrence_summary(event: &EKEvent) -> Option<String> {
     Some(summary)
 }
 
-fn event_matches_query(event: &EventInfo, query_lower: &str, exact: bool) -> bool {
-    let matches = |value: &str| {
-        if exact {
-            value.to_lowercase() == query_lower
+fn recurrence_rule_info(event: &EKEvent) -> Option<RecurrenceRuleInfo> {
+    let rules = unsafe { event.recurrenceRules() }?;
+    let rule = rules.firstObject()?;
+    let frequency = match unsafe { rule.frequency() } {
+        EKRecurrenceFrequency::Daily => "daily",
+        EKRecurrenceFrequency::Weekly => "weekly",
+        EKRecurrenceFrequency::Monthly => "monthly",
+        EKRecurrenceFrequency::Yearly => "yearly",
+        _ => "custom",
+    }
+    .to_string();
+    let interval = unsafe { rule.interval() }.max(1) as u32;
+    let (count, until) = if let Some(end) = unsafe { rule.recurrenceEnd() } {
+        let count = unsafe { end.occurrenceCount() };
+        if count > 0 {
+            (Some(count as u32), None)
         } else {
-            value.to_lowercase().contains(query_lower)
+            (
+                None,
+                unsafe { end.endDate() }.map(|date| nsdate_to_datetime(date).date_naive()),
+            )
         }
+    } else {
+        (None, None)
     };
+
+    Some(RecurrenceRuleInfo {
+        frequency,
+        interval,
+        count,
+        until,
+    })
+}
+
+fn alarm_minutes_before(event: &EKEvent, start: DateTime<Local>) -> Vec<i64> {
+    let Some(alarms) = (unsafe { event.alarms() }) else {
+        return Vec::new();
+    };
+
+    let mut result = Vec::new();
+    for i in 0..alarms.count() {
+        let alarm = alarms.objectAtIndex(i);
+        let relative = unsafe { alarm.relativeOffset() };
+        let minutes = if relative != 0.0 {
+            Some(((-relative) / 60.0).round() as i64)
+        } else {
+            unsafe { alarm.absoluteDate() }.map(|absolute| {
+                start
+                    .signed_duration_since(nsdate_to_datetime(absolute))
+                    .num_minutes()
+            })
+        };
+
+        if let Some(minutes) = minutes {
+            if minutes >= 0 {
+                result.push(minutes);
+            }
+        }
+    }
+
+    result.sort_unstable();
+    result.dedup();
+    result
+}
+
+fn event_draft_from_event(event: &EKEvent) -> EventDraft {
+    let (calendar, calendar_id) = event_calendar_ref(event);
+    let start = nsdate_to_datetime(unsafe { event.startDate() });
+    let all_day = unsafe { event.isAllDay() };
+    let end = normalize_all_day_end(nsdate_to_datetime(unsafe { event.endDate() }), all_day);
+    EventDraft {
+        title: unsafe { event.title() }.to_string(),
+        start,
+        end,
+        calendar,
+        calendar_id,
+        location: unsafe { event.location() }.map(|l| l.to_string()),
+        url: unsafe { event.URL() }.and_then(|u| u.absoluteString().map(|s| s.to_string())),
+        notes: unsafe { event.notes() }.map(|n| n.to_string()),
+        all_day,
+        alerts: alarm_minutes_before(event, start),
+        recurrence_rule: recurrence_rule_info(event),
+    }
+}
+
+fn recurrence_frequency_from_str(value: &str) -> Result<EKRecurrenceFrequency, AppError> {
+    match value {
+        "daily" => Ok(EKRecurrenceFrequency::Daily),
+        "weekly" => Ok(EKRecurrenceFrequency::Weekly),
+        "monthly" => Ok(EKRecurrenceFrequency::Monthly),
+        "yearly" => Ok(EKRecurrenceFrequency::Yearly),
+        other => Err(AppError::InvalidArgument(format!(
+            "Unknown repeat frequency: {other}. Use daily, weekly, monthly, or yearly."
+        ))),
+    }
+}
+
+fn recurrence_end_for_rule(
+    rule: &RecurrenceRuleInfo,
+    all_day: bool,
+) -> Result<Option<Retained<EKRecurrenceEnd>>, AppError> {
+    if let Some(count) = rule.count {
+        return Ok(Some(unsafe {
+            EKRecurrenceEnd::recurrenceEndWithOccurrenceCount(count as usize)
+        }));
+    }
+
+    let Some(until) = rule.until else {
+        return Ok(None);
+    };
+    let end_of_day = until.and_hms_opt(23, 59, 59).unwrap();
+    let end_local = localize_datetime(end_of_day)?;
+    let _ = all_day;
+    let until_date = datetime_to_nsdate(end_local);
+    Ok(Some(unsafe {
+        EKRecurrenceEnd::recurrenceEndWithEndDate(&until_date)
+    }))
+}
+
+fn apply_recurrence_rule(
+    event: &EKEvent,
+    recurrence_rule: Option<&RecurrenceRuleInfo>,
+    all_day: bool,
+) -> Result<(), AppError> {
+    match recurrence_rule {
+        None => unsafe { event.setRecurrenceRules(None) },
+        Some(rule_info) => {
+            let frequency = recurrence_frequency_from_str(&rule_info.frequency)?;
+            let recurrence_end = recurrence_end_for_rule(rule_info, all_day)?;
+            let rule = unsafe {
+                EKRecurrenceRule::initRecurrenceWithFrequency_interval_end(
+                    EKRecurrenceRule::alloc(),
+                    frequency,
+                    rule_info.interval.max(1) as isize,
+                    recurrence_end.as_deref(),
+                )
+            };
+            let rules = NSArray::from_retained_slice(&[rule]);
+            unsafe { event.setRecurrenceRules(Some(&rules)) };
+        }
+    }
+    Ok(())
+}
+
+fn apply_alerts(event: &EKEvent, alerts: &[i64]) -> Result<(), AppError> {
+    validate_alert_minutes(alerts)?;
+    if alerts.is_empty() {
+        unsafe { event.setAlarms(None) };
+        return Ok(());
+    }
+
+    let alarms = alerts
+        .iter()
+        .map(|minutes| unsafe { EKAlarm::alarmWithRelativeOffset(-((*minutes as f64) * 60.0)) })
+        .collect::<Vec<_>>();
+    let alarm_array = NSArray::from_retained_slice(&alarms);
+    unsafe { event.setAlarms(Some(&alarm_array)) };
+    Ok(())
+}
+
+fn filter_search_matches(events: Vec<EventInfo>, query_lower: &str, exact: bool) -> Vec<EventInfo> {
+    events
+        .into_iter()
+        .filter(|event| event.status != "canceled")
+        .filter(|event| event_matches_query(event, query_lower, exact))
+        .collect()
+}
+
+fn event_matches_query(event: &EventInfo, query_lower: &str, exact: bool) -> bool {
+    if exact {
+        return event.title.to_lowercase() == query_lower;
+    }
+
+    let matches = |value: &str| value.to_lowercase().contains(query_lower);
 
     matches(&event.title)
         || matches(&event.calendar)
+        || matches(&event.calendar_id)
         || event.location.as_deref().is_some_and(matches)
         || event.url.as_deref().is_some_and(matches)
         || event.notes.as_deref().is_some_and(matches)
+}
+
+fn event_blocks_schedule(event: &EventInfo) -> bool {
+    event.status != "canceled" && event.availability != "free"
+}
+
+fn event_conflicts_range(
+    event: &EventInfo,
+    range_start: DateTime<Local>,
+    range_end: DateTime<Local>,
+) -> bool {
+    event_blocks_schedule(event) && event.start < range_end && event.end > range_start
+}
+
+fn blocked_interval_for_window(
+    event: &EventInfo,
+    window_start: DateTime<Local>,
+    window_end: DateTime<Local>,
+) -> Option<(DateTime<Local>, DateTime<Local>)> {
+    if !event_blocks_schedule(event) {
+        return None;
+    }
+
+    if event.end <= window_start || event.start >= window_end {
+        return None;
+    }
+
+    if event.all_day {
+        return Some((window_start, window_end));
+    }
+
+    Some((event.start.max(window_start), event.end.min(window_end)))
+}
+
+fn resolve_calendar_identifier(spec: &str, calendars: &[CalendarInfo]) -> Result<String, AppError> {
+    if let Some(cal) = calendars.iter().find(|cal| cal.id == spec) {
+        return Ok(cal.id.clone());
+    }
+
+    let matches: Vec<&CalendarInfo> = calendars.iter().filter(|cal| cal.title == spec).collect();
+    match matches.len() {
+        0 => Err(AppError::CalendarNotFound(spec.to_string())),
+        1 => Ok(matches[0].id.clone()),
+        _ => {
+            let preview = matches
+                .iter()
+                .map(|cal| format!("{} [{}] ({})", cal.title, cal.source, cal.id))
+                .collect::<Vec<_>>()
+                .join("; ");
+            Err(AppError::InvalidArgument(format!(
+                "Calendar name '{spec}' is ambiguous. Use a calendar ID instead. Matches: {preview}"
+            )))
+        }
+    }
+}
+
+fn calendar_matches(calendar: &EKCalendar, spec: &str) -> bool {
+    unsafe { calendar.title() }.to_string() == spec
+        || unsafe { calendar.calendarIdentifier() }.to_string() == spec
+}
+
+fn event_calendar_ref(event: &EKEvent) -> (String, String) {
+    unsafe { event.calendar() }
+        .map(|calendar| {
+            (
+                unsafe { calendar.title() }.to_string(),
+                unsafe { calendar.calendarIdentifier() }.to_string(),
+            )
+        })
+        .unwrap_or_else(|| (String::new(), String::new()))
 }
 
 fn nsdate_to_datetime(date: Retained<NSDate>) -> DateTime<Local> {
@@ -826,7 +1343,10 @@ fn nsdate_to_datetime(date: Retained<NSDate>) -> DateTime<Local> {
 #[cfg(test)]
 mod tests {
     use super::{
-        EventInfo, event_matches_query, normalize_all_day_end, validate_updated_time_range,
+        CalendarInfo, EventInfo, blocked_interval_for_window, calculate_free_slots,
+        event_blocks_schedule, event_conflicts_range, event_matches_query, filter_search_matches,
+        normalize_all_day_end, resolve_calendar_identifier, validate_all_day_transition,
+        validate_updated_time_range,
     };
     use crate::error::AppError;
     use chrono::{Local, NaiveDate, TimeZone};
@@ -859,6 +1379,57 @@ mod tests {
                 .unwrap_err();
 
         assert!(matches!(err, AppError::InvalidDate(_)));
+    }
+
+    #[test]
+    fn test_resolve_calendar_identifier_prefers_exact_id() {
+        let calendars = vec![
+            CalendarInfo {
+                id: "cal-1".to_string(),
+                title: "Work".to_string(),
+                source: "iCloud".to_string(),
+            },
+            CalendarInfo {
+                id: "cal-2".to_string(),
+                title: "Work".to_string(),
+                source: "Exchange".to_string(),
+            },
+        ];
+
+        assert_eq!(
+            resolve_calendar_identifier("cal-2", &calendars).unwrap(),
+            "cal-2"
+        );
+    }
+
+    #[test]
+    fn test_resolve_calendar_identifier_rejects_ambiguous_title() {
+        let calendars = vec![
+            CalendarInfo {
+                id: "cal-1".to_string(),
+                title: "Work".to_string(),
+                source: "iCloud".to_string(),
+            },
+            CalendarInfo {
+                id: "cal-2".to_string(),
+                title: "Work".to_string(),
+                source: "Exchange".to_string(),
+            },
+        ];
+
+        let err = resolve_calendar_identifier("Work", &calendars).unwrap_err();
+        assert!(matches!(err, AppError::InvalidArgument(_)));
+    }
+
+    #[test]
+    fn test_filter_search_matches_skips_canceled_events() {
+        let mut canceled = make_event("Review", "Work", None);
+        canceled.status = "canceled".to_string();
+        let visible = make_event("Review", "Work", None);
+
+        let matches = filter_search_matches(vec![canceled, visible.clone()], "review", false);
+        assert_eq!(matches.len(), 1);
+        assert_eq!(matches[0].title, visible.title);
     }
 
     #[test]
@@ -938,6 +1509,7 @@ mod tests {
             start,
             end,
             calendar: calendar.to_string(),
+            calendar_id: "cal-1".to_string(),
             location: Some("Room 1".to_string()),
             url: Some("https://example.com".to_string()),
             notes: notes.map(str::to_string),
@@ -949,6 +1521,8 @@ mod tests {
             modified: None,
             recurring: false,
             recurrence: None,
+            recurrence_rule: None,
+            alerts: Vec::new(),
         }
     }
 
@@ -964,5 +1538,143 @@ mod tests {
         let event = make_event("Weekly Standup", "Work", Some("notes"));
         assert!(event_matches_query(&event, "weekly standup", true));
         assert!(!event_matches_query(&event, "stand", true));
+        assert!(!event_matches_query(&event, "room 1", true));
+    }
+
+    #[test]
+    fn test_calculate_free_slots_blocks_all_day_events() {
+        let day = NaiveDate::from_ymd_opt(2026, 3, 20).unwrap();
+        let event = EventInfo {
+            all_day: true,
+            start: local_dt(2026, 3, 20, 0, 0),
+            end: local_dt(2026, 3, 21, 0, 0),
+            ..make_event("PTO", "Work", None)
+        };
+
+        let slots = calculate_free_slots(
+            &[event],
+            day,
+            day,
+            Some(chrono::NaiveTime::from_hms_opt(9, 0, 0).unwrap()),
+            Some(chrono::NaiveTime::from_hms_opt(17, 0, 0).unwrap()),
+            30,
+        );
+
+        assert!(slots.is_empty());
+    }
+
+    #[test]
+    fn test_calculate_free_slots_blocks_multi_day_all_day_events_each_day() {
+        let from = NaiveDate::from_ymd_opt(2026, 3, 20).unwrap();
+        let to = NaiveDate::from_ymd_opt(2026, 3, 21).unwrap();
+        let event = EventInfo {
+            all_day: true,
+            start: local_dt(2026, 3, 20, 0, 0),
+            end: local_dt(2026, 3, 22, 0, 0),
+            ..make_event("Trip", "Work", None)
+        };
+
+        let slots = calculate_free_slots(
+            &[event],
+            from,
+            to,
+            Some(chrono::NaiveTime::from_hms_opt(9, 0, 0).unwrap()),
+            Some(chrono::NaiveTime::from_hms_opt(17, 0, 0).unwrap()),
+            30,
+        );
+
+        assert!(slots.is_empty());
+    }
+
+    #[test]
+    fn test_event_blocks_schedule_ignores_canceled_and_free_events() {
+        let mut canceled = make_event("Canceled", "Work", None);
+        canceled.status = "canceled".to_string();
+        assert!(!event_blocks_schedule(&canceled));
+
+        let mut free = make_event("FYI", "Work", None);
+        free.availability = "free".to_string();
+        assert!(!event_blocks_schedule(&free));
+
+        let busy = make_event("Busy", "Work", None);
+        assert!(event_blocks_schedule(&busy));
+    }
+
+    #[test]
+    fn test_validate_all_day_transition_requires_both_bounds_when_disabling_all_day() {
+        let start = NaiveDate::from_ymd_opt(2026, 3, 20)
+            .unwrap()
+            .and_hms_opt(10, 0, 0)
+            .unwrap();
+        assert!(validate_all_day_transition(true, false, Some(start), None).is_err());
+        assert!(validate_all_day_transition(true, false, None, Some(start)).is_err());
+        assert!(validate_all_day_transition(true, false, Some(start), Some(start)).is_ok());
+        assert!(validate_all_day_transition(false, false, None, None).is_ok());
+    }
+
+    #[test]
+    fn test_event_conflicts_range_matches_all_day_overlap() {
+        let event = EventInfo {
+            all_day: true,
+            start: local_dt(2026, 3, 20, 0, 0),
+            end: local_dt(2026, 3, 21, 0, 0),
+            ..make_event("PTO", "Work", None)
+        };
+
+        assert!(event_conflicts_range(
+            &event,
+            local_dt(2026, 3, 20, 10, 0),
+            local_dt(2026, 3, 20, 11, 0),
+        ));
+    }
+
+    #[test]
+    fn test_event_conflicts_range_skips_canceled_events() {
+        let mut event = make_event("Canceled", "Work", None);
+        event.status = "canceled".to_string();
+
+        assert!(!event_conflicts_range(
+            &event,
+            local_dt(2026, 3, 20, 10, 0),
+            local_dt(2026, 3, 20, 11, 0),
+        ));
+    }
+
+    #[test]
+    fn test_blocked_interval_skips_non_blocking_events() {
+        let window_start = local_dt(2026, 3, 20, 9, 0);
+        let window_end = local_dt(2026, 3, 20, 17, 0);
+
+        let mut canceled = make_event("Canceled", "Work", None);
+        canceled.status = "canceled".to_string();
+        assert!(blocked_interval_for_window(&canceled, window_start, window_end).is_none());
+
+        let mut free = make_event("FYI", "Work", None);
+        free.availability = "free".to_string();
+        assert!(blocked_interval_for_window(&free, window_start, window_end).is_none());
+    }
+
+    #[test]
+    fn test_calculate_free_slots_ignores_free_and_canceled_events() {
+        let day = NaiveDate::from_ymd_opt(2026, 3, 20).unwrap();
+
+        let mut free = make_event("FYI", "Work", None);
+        free.availability = "free".to_string();
+
+        let mut canceled = make_event("Canceled", "Work", None);
+        canceled.status = "canceled".to_string();
+
+        let slots = calculate_free_slots(
+            &[free, canceled],
+            day,
+            day,
+            Some(chrono::NaiveTime::from_hms_opt(9, 0, 0).unwrap()),
+            Some(chrono::NaiveTime::from_hms_opt(17, 0, 0).unwrap()),
+            30,
+        );
+
+        assert_eq!(slots.len(), 1);
+        assert_eq!(slots[0].start, local_dt(2026, 3, 20, 9, 0));
+        assert_eq!(slots[0].end, local_dt(2026, 3, 20, 17, 0));
     }
 }

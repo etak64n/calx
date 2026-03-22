@@ -26,7 +26,7 @@ pub fn run(
         to,
         interactive,
     )?;
-    print_output(format, &event, |ev| {
+    print_output(format, &event, |ev, out| {
         let (bold, dim, reset) = if !no_color {
             ("\x1b[1m", "\x1b[2m", "\x1b[0m")
         } else {
@@ -34,12 +34,12 @@ pub fn run(
         };
 
         let label_w = 14;
-        let print_field = |label: &str, value: &str| {
-            println!("{dim}{label:<label_w$}{reset}{bold}{value}{reset}");
+        let mut print_field = |label: &str, value: &str| {
+            writeln!(out, "{dim}{label:<label_w$}{reset}{bold}{value}{reset}")
         };
 
-        print_field("Title:", &ev.title);
-        print_field("Calendar:", &ev.calendar);
+        print_field("Title:", &ev.title)?;
+        print_field("Calendar:", &ev.calendar)?;
         if ev.all_day {
             let end_date = if ev.end.time() == chrono::NaiveTime::from_hms_opt(0, 0, 0).unwrap()
                 && ev.end.date_naive() > ev.start.date_naive()
@@ -57,46 +57,55 @@ pub fn run(
             } else {
                 format!("{} (All Day)", ev.start.format("%Y-%m-%d"))
             };
-            print_field("Date:", &date);
+            print_field("Date:", &date)?;
         } else {
-            print_field("Start:", &ev.start.format("%Y-%m-%d %H:%M").to_string());
-            print_field("End:", &ev.end.format("%Y-%m-%d %H:%M").to_string());
+            print_field("Start:", &ev.start.format("%Y-%m-%d %H:%M").to_string())?;
+            print_field("End:", &ev.end.format("%Y-%m-%d %H:%M").to_string())?;
         }
         if ev.recurring {
-            print_field("Recurring:", "yes");
+            print_field("Recurring:", "yes")?;
         }
         if let Some(recurrence) = &ev.recurrence {
-            print_field("Repeat:", recurrence);
+            print_field("Repeat:", recurrence)?;
+        }
+        if !ev.alerts.is_empty() {
+            let summary = ev
+                .alerts
+                .iter()
+                .map(|minutes| format!("{minutes}m"))
+                .collect::<Vec<_>>()
+                .join(", ");
+            print_field("Alerts:", &summary)?;
         }
         if let Some(loc) = &ev.location {
             if !loc.is_empty() {
-                print_field("Location:", loc);
+                print_field("Location:", loc)?;
             }
         }
         if let Some(url) = &ev.url {
             if !url.is_empty() {
-                print_field("URL:", url);
+                print_field("URL:", url)?;
             }
         }
-        print_field("Status:", &ev.status);
-        print_field("Availability:", &ev.availability);
+        print_field("Status:", &ev.status)?;
+        print_field("Availability:", &ev.availability)?;
         if let Some(org) = &ev.organizer {
             if !org.is_empty() {
-                print_field("Organizer:", org);
+                print_field("Organizer:", org)?;
             }
         }
         if let Some(notes) = &ev.notes {
             if !notes.is_empty() {
-                print_field("Notes:", notes);
+                print_field("Notes:", notes)?;
             }
         }
         if let Some(c) = &ev.created {
-            print_field("Created:", &c.format("%Y-%m-%d %H:%M").to_string());
+            print_field("Created:", &c.format("%Y-%m-%d %H:%M").to_string())?;
         }
         if let Some(m) = &ev.modified {
-            print_field("Modified:", &m.format("%Y-%m-%d %H:%M").to_string());
+            print_field("Modified:", &m.format("%Y-%m-%d %H:%M").to_string())?;
         }
-        print_field("ID:", &ev.id);
-    });
+        print_field("ID:", &ev.id)
+    })?;
     Ok(())
 }

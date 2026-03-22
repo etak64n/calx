@@ -2,7 +2,17 @@ use crate::cli::OutputFormat;
 use crate::dateparse;
 use crate::error::AppError;
 use crate::output::print_output;
+use crate::state::{self, UndoAction};
 use crate::store::CalendarStore;
+use crate::store::RecurrenceScope;
+use serde::Serialize;
+
+#[derive(Serialize)]
+struct ConflictWarning<'a> {
+    warning: &'a str,
+    conflict_count: usize,
+    conflicts: &'a [crate::store::EventInfo],
+}
 
 #[allow(clippy::too_many_arguments)]
 pub fn run(
@@ -41,22 +51,56 @@ pub fn run(
         )
     };
 
+    if !all_day && end_dt <= start_dt {
+        return Err(AppError::InvalidDate(
+            "end time must be after start time".to_string(),
+        ));
+    }
+
     // Check for conflicts if requested
-    if check_conflicts && !all_day {
+    if check_conflicts {
         let conflicts = store.conflicts(start_dt, end_dt, calendar)?;
         if !conflicts.is_empty() {
-            eprintln!("Warning: {} conflicting event(s) found:", conflicts.len());
-            for c in &conflicts {
-                eprintln!(
-                    "  {} - {} | {}",
-                    c.start.format("%H:%M"),
-                    c.end.format("%H:%M"),
-                    c.title
+            if matches!(format.resolve_for_stdout(), OutputFormat::Human) {
+                eprintln!("Warning: {} conflicting event(s) found:", conflicts.len());
+                for c in &conflicts {
+                    if c.all_day {
+                        let end_date = c.end.date_naive() - chrono::Duration::days(1);
+                        if end_date > c.start.date_naive() {
+                            eprintln!(
+                                "  {} to {} | {}",
+                                c.start.format("%Y-%m-%d"),
+                                end_date.format("%Y-%m-%d"),
+                                c.title
+                            );
+                        } else {
+                            eprintln!("  {} | {}", c.start.format("%Y-%m-%d"), c.title);
+                        }
+                    } else {
+                        eprintln!(
+                            "  {} - {} | {}",
+                            c.start.format("%H:%M"),
+                            c.end.format("%H:%M"),
+                            c.title
+                        );
+                    }
+                }
+                eprintln!();
+            } else {
+                super::emit_warning(
+                    format,
+                    "Conflicting events found.",
+                    &ConflictWarning {
+                        warning: "Conflicting events found.",
+                        conflict_count: conflicts.len(),
+                        conflicts: &conflicts,
+                    },
                 );
             }
-            eprintln!();
         }
     }
+
+    state::ensure_no_pending_undo()?;
 
     let event_id = store.add_event(
         title,
@@ -74,8 +118,16 @@ pub fn run(
     )?;
 
     let event = store.get_event(&event_id)?;
-    print_output(format, &event, |ev| {
-        println!("Event created: {}", ev.id);
-    });
+    super::save_undo_best_effort(
+        UndoAction::DeleteCreated {
+            event_id: event.id.clone(),
+            selected_start: event.start,
+            scope: event.recurring.then_some(RecurrenceScope::Future),
+        },
+        format,
+    );
+    print_output(format, &event, |ev, out| {
+        writeln!(out, "Event created: {}", ev.id)
+    })?;
     Ok(())
 }

@@ -1,6 +1,6 @@
 use crate::error::AppError;
 use crate::store::{CalendarStore, EventInfo};
-use std::io::{self, BufRead, Write};
+use std::io::{self, BufRead, IsTerminal, Write};
 
 #[allow(clippy::too_many_arguments)]
 pub fn resolve_event(
@@ -14,7 +14,14 @@ pub fn resolve_event(
     interactive: bool,
 ) -> Result<EventInfo, AppError> {
     match (event_id, query) {
-        (Some(event_id), None) => store.get_event(event_id),
+        (Some(event_id), None) => {
+            if event_id.trim().is_empty() {
+                return Err(AppError::InvalidArgument(
+                    "EVENT_ID must not be empty".to_string(),
+                ));
+            }
+            store.get_event(event_id)
+        }
         (None, Some(query)) => {
             let (from_date, to_date) = super::search::resolve_search_range(from, to)?;
             let matches = store.search_events(query, exact, from_date, to_date, in_calendar)?;
@@ -43,7 +50,7 @@ pub fn resolve_event(
                             .collect::<Vec<_>>()
                             .join("; ");
                         Err(AppError::InvalidArgument(format!(
-                            "Query matched {count} events. Use -i to pick interactively, or narrow with --exact/--in-calendar/--from/--to. Matches: {preview}"
+                            "Query matched {count} events. Use -i to pick interactively, or narrow with --exact title/--in-calendar/--from/--to. Matches: {preview}"
                         )))
                     }
                 }
@@ -59,6 +66,12 @@ pub fn resolve_event(
 }
 
 fn pick_event(mut events: Vec<EventInfo>) -> Result<EventInfo, AppError> {
+    if !io::stdin().is_terminal() || !io::stderr().is_terminal() {
+        return Err(AppError::InvalidArgument(
+            "Interactive selection requires a TTY. Narrow the query or omit -i.".to_string(),
+        ));
+    }
+
     events.sort_by_key(|e| e.start);
 
     eprintln!("Multiple events found. Pick one:\n");
@@ -84,7 +97,7 @@ fn pick_event(mut events: Vec<EventInfo>) -> Result<EventInfo, AppError> {
         }
     }
 
-    eprint!("\nEnter number (1-{}): ", events.len());
+    eprint!("\nEnter number (1-{}) or q to cancel: ", events.len());
     io::stderr().flush().ok();
 
     let mut input = String::new();
@@ -93,8 +106,14 @@ fn pick_event(mut events: Vec<EventInfo>) -> Result<EventInfo, AppError> {
         .read_line(&mut input)
         .map_err(|e| AppError::EventKit(format!("Failed to read input: {e}")))?;
 
-    let choice: usize = input
-        .trim()
+    let trimmed = input.trim();
+    if matches!(trimmed, "q" | "quit" | "exit") {
+        return Err(AppError::InvalidArgument(
+            "Interactive selection cancelled.".to_string(),
+        ));
+    }
+
+    let choice: usize = trimmed
         .parse()
         .map_err(|_| AppError::InvalidArgument("Invalid number".to_string()))?;
 

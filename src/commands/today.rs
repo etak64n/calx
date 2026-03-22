@@ -14,6 +14,5 @@ pub fn run(
     super::events::validate_opts(opts)?;
     let today = Local::now().date_naive();
     let events = store.events(today, today, calendar.as_deref())?;
-    super::events::print_events(events, format, opts);
-    Ok(())
+    super::events::print_events(events, format, opts)
 }

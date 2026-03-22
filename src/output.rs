@@ -1,89 +1,99 @@
 use crate::cli::OutputFormat;
-use crate::store::EventInfo;
+use crate::error::AppError;
 use serde::Serialize;
+use std::io::{self, Write};
 use unicode_width::UnicodeWidthStr;
 
-pub fn print_output<T: Serialize>(format: OutputFormat, data: &T, human_fn: impl FnOnce(&T)) {
+pub fn print_output<T: Serialize>(
+    format: OutputFormat,
+    data: &T,
+    human_fn: impl FnOnce(&T, &mut dyn Write) -> io::Result<()>,
+) -> Result<(), AppError> {
+    let format = format.resolve_for_stdout();
+    let stdout = io::stdout();
+    let mut out = stdout.lock();
+
     match format {
-        OutputFormat::Human => human_fn(data),
-        OutputFormat::Table => print_table(data),
-        OutputFormat::Json => {
-            if let Ok(s) = serde_json::to_string_pretty(data) {
-                println!("{s}");
-            }
-        }
-        OutputFormat::Yaml => {
-            if let Ok(s) = serde_yml::to_string(data) {
-                print!("{s}");
-            }
-        }
-        OutputFormat::Csv => print_delimited(data, b','),
-        OutputFormat::Tsv => print_delimited(data, b'\t'),
-        OutputFormat::Ics => {
-            let val = serde_json::to_value(data).unwrap_or_default();
-            // Try as Vec<EventInfo> first, then as single EventInfo
-            if let Ok(events) = serde_json::from_value::<Vec<EventInfo>>(val.clone()) {
-                print_ics(&events);
-            } else if let Ok(event) = serde_json::from_value::<EventInfo>(val) {
-                print_ics(&[event]);
-            } else if let Ok(s) = serde_json::to_string_pretty(data) {
-                // Non-event data (e.g. calendars): fall back to JSON
-                println!("{s}");
-            }
-        }
+        OutputFormat::Human => human_fn(data, &mut out).map_err(|e| AppError::Io(e.to_string()))?,
+        _ => write_structured_output_to(format, data, &mut out)?,
     }
+
+    out.flush().map_err(|e| AppError::Io(e.to_string()))?;
+    Ok(())
 }
 
-fn print_delimited<T: Serialize>(data: &T, delimiter: u8) {
+pub fn write_structured_output_to<T: Serialize, W: Write>(
+    format: OutputFormat,
+    data: &T,
+    out: &mut W,
+) -> Result<(), AppError> {
+    let format = format.resolve_for_stdout();
+    match format {
+        OutputFormat::Auto | OutputFormat::Human => write_json(out, data)?,
+        OutputFormat::Table => print_table(out, data).map_err(|e| AppError::Io(e.to_string()))?,
+        OutputFormat::Json => write_json(out, data)?,
+        OutputFormat::Yaml => write_yaml(out, data)?,
+        OutputFormat::Csv => print_delimited(out, data, b',')?,
+        OutputFormat::Tsv => print_delimited(out, data, b'\t')?,
+    }
+    out.flush().map_err(|e| AppError::Io(e.to_string()))?;
+    Ok(())
+}
+
+fn write_json<T: Serialize, W: Write>(out: &mut W, data: &T) -> Result<(), AppError> {
+    serde_json::to_writer_pretty(&mut *out, data).map_err(|e| AppError::Io(e.to_string()))?;
+    out.write_all(b"\n")
+        .map_err(|e| AppError::Io(e.to_string()))?;
+    Ok(())
+}
+
+fn write_yaml<T: Serialize, W: Write>(out: &mut W, data: &T) -> Result<(), AppError> {
+    let yaml = serde_yml::to_string(data).map_err(|e| AppError::Io(e.to_string()))?;
+    out.write_all(yaml.as_bytes())
+        .map_err(|e| AppError::Io(e.to_string()))?;
+    if !yaml.ends_with('\n') {
+        out.write_all(b"\n")
+            .map_err(|e| AppError::Io(e.to_string()))?;
+    }
+    Ok(())
+}
+
+fn print_delimited<T: Serialize, W: Write>(
+    out: &mut W,
+    data: &T,
+    delimiter: u8,
+) -> Result<(), AppError> {
     let mut wtr = csv::WriterBuilder::new()
         .delimiter(delimiter)
-        .from_writer(std::io::stdout());
+        .from_writer(out);
     if let Ok(arr) = serde_json::to_value(data) {
         if let Some(items) = arr.as_array() {
             if let Some(first) = items.first() {
                 if let Some(obj) = first.as_object() {
-                    wtr.write_record(obj.keys()).ok();
+                    wtr.write_record(obj.keys())
+                        .map_err(|e| AppError::Io(e.to_string()))?;
                 }
             }
             for item in items {
                 if let Some(obj) = item.as_object() {
-                    wtr.write_record(obj.values().map(value_to_string)).ok();
+                    wtr.write_record(obj.values().map(value_to_string))
+                        .map_err(|e| AppError::Io(e.to_string()))?;
                 }
             }
         } else if let Some(obj) = arr.as_object() {
-            wtr.write_record(obj.keys()).ok();
-            wtr.write_record(obj.values().map(value_to_string)).ok();
+            wtr.write_record(obj.keys())
+                .map_err(|e| AppError::Io(e.to_string()))?;
+            wtr.write_record(obj.values().map(value_to_string))
+                .map_err(|e| AppError::Io(e.to_string()))?;
         }
     }
-    wtr.flush().ok();
+    wtr.flush().map_err(|e| AppError::Io(e.to_string()))?;
+    Ok(())
 }
 
-fn print_ics(events: &[EventInfo]) {
-    println!("BEGIN:VCALENDAR");
-    println!("VERSION:2.0");
-    println!("PRODID:-//calx//EN");
-    for ev in events {
-        println!("BEGIN:VEVENT");
-        println!("UID:{}", ev.id);
-        if ev.all_day {
-            println!("DTSTART;VALUE=DATE:{}", ev.start.format("%Y%m%d"));
-            println!("DTEND;VALUE=DATE:{}", ev.end.format("%Y%m%d"));
-        } else {
-            println!("DTSTART:{}", ev.start.format("%Y%m%dT%H%M%S"));
-            println!("DTEND:{}", ev.end.format("%Y%m%dT%H%M%S"));
-        }
-        println!("SUMMARY:{}", ics_escape(&ev.title));
-        if let Some(notes) = &ev.notes {
-            println!("DESCRIPTION:{}", ics_escape(notes));
-        }
-        println!("END:VEVENT");
-    }
-    println!("END:VCALENDAR");
-}
-
-fn print_table<T: Serialize>(data: &T) {
+fn print_table<T: Serialize, W: Write>(out: &mut W, data: &T) -> io::Result<()> {
     let Ok(val) = serde_json::to_value(data) else {
-        return;
+        return Ok(());
     };
 
     let items: Vec<&serde_json::Map<String, serde_json::Value>> = if let Some(arr) = val.as_array()
@@ -92,11 +102,11 @@ fn print_table<T: Serialize>(data: &T) {
     } else if let Some(obj) = val.as_object() {
         vec![obj]
     } else {
-        return;
+        return Ok(());
     };
 
     if items.is_empty() {
-        return;
+        return Ok(());
     }
 
     let keys: Vec<&String> = items[0].keys().collect();
@@ -120,56 +130,49 @@ fn print_table<T: Serialize>(data: &T) {
         .collect();
 
     // Top border
-    print!("┌");
+    write!(out, "┌")?;
     for (i, w) in widths.iter().enumerate() {
-        print!("{}", "─".repeat(w + 2));
-        print!("{}", if i < widths.len() - 1 { "┬" } else { "┐" });
+        write!(out, "{}", "─".repeat(w + 2))?;
+        write!(out, "{}", if i < widths.len() - 1 { "┬" } else { "┐" })?;
     }
-    println!();
+    writeln!(out)?;
 
     // Header
-    print!("│");
+    write!(out, "│")?;
     for (i, key) in keys.iter().enumerate() {
         let label = key.to_uppercase();
         let pad = widths[i] - UnicodeWidthStr::width(label.as_str());
-        print!(" {}{} │", label, " ".repeat(pad));
+        write!(out, " {}{} │", label, " ".repeat(pad))?;
     }
-    println!();
+    writeln!(out)?;
 
     // Separator
-    print!("├");
+    write!(out, "├")?;
     for (i, w) in widths.iter().enumerate() {
-        print!("{}", "─".repeat(w + 2));
-        print!("{}", if i < widths.len() - 1 { "┼" } else { "┤" });
+        write!(out, "{}", "─".repeat(w + 2))?;
+        write!(out, "{}", if i < widths.len() - 1 { "┼" } else { "┤" })?;
     }
-    println!();
+    writeln!(out)?;
 
     // Rows
     for obj in &items {
-        print!("│");
+        write!(out, "│")?;
         for (i, key) in keys.iter().enumerate() {
             let val = value_to_string(obj.get(key.as_str()).unwrap_or(&serde_json::Value::Null));
             let pad = widths[i] - UnicodeWidthStr::width(val.as_str());
-            print!(" {}{} │", val, " ".repeat(pad));
+            write!(out, " {}{} │", val, " ".repeat(pad))?;
         }
-        println!();
+        writeln!(out)?;
     }
 
     // Bottom border
-    print!("└");
+    write!(out, "└")?;
     for (i, w) in widths.iter().enumerate() {
-        print!("{}", "─".repeat(w + 2));
-        print!("{}", if i < widths.len() - 1 { "┴" } else { "┘" });
+        write!(out, "{}", "─".repeat(w + 2))?;
+        write!(out, "{}", if i < widths.len() - 1 { "┴" } else { "┘" })?;
     }
-    println!();
-}
-
-/// Escape text per RFC 5545 section 3.3.11 (TEXT).
-pub(crate) fn ics_escape(s: &str) -> String {
-    s.replace('\\', "\\\\")
-        .replace(';', "\\;")
-        .replace(',', "\\,")
-        .replace('\n', "\\n")
+    writeln!(out)?;
+    Ok(())
 }
 
 fn value_to_string(v: &serde_json::Value) -> String {
@@ -183,6 +186,19 @@ fn value_to_string(v: &serde_json::Value) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::io;
+
+    struct FailingWriter;
+
+    impl io::Write for FailingWriter {
+        fn write(&mut self, _buf: &[u8]) -> io::Result<usize> {
+            Err(io::Error::new(io::ErrorKind::BrokenPipe, "broken pipe"))
+        }
+
+        fn flush(&mut self) -> io::Result<()> {
+            Err(io::Error::new(io::ErrorKind::BrokenPipe, "broken pipe"))
+        }
+    }
 
     #[test]
     fn test_value_to_string_variants() {
@@ -193,5 +209,26 @@ mod tests {
         assert_eq!(value_to_string(&serde_json::Value::Null), "");
         assert_eq!(value_to_string(&serde_json::Value::Bool(true)), "true");
         assert_eq!(value_to_string(&serde_json::json!(42)), "42");
+    }
+
+    #[test]
+    fn test_write_json_propagates_io_errors() {
+        let mut writer = FailingWriter;
+        let err = write_json(&mut writer, &serde_json::json!({"ok": true})).unwrap_err();
+        assert!(matches!(err, AppError::Io(_)));
+    }
+
+    #[test]
+    fn test_write_yaml_propagates_io_errors() {
+        let mut writer = FailingWriter;
+        let err = write_yaml(&mut writer, &serde_json::json!({"ok": true})).unwrap_err();
+        assert!(matches!(err, AppError::Io(_)));
+    }
+
+    #[test]
+    fn test_print_table_propagates_io_errors() {
+        let mut writer = FailingWriter;
+        let err = print_table(&mut writer, &vec![serde_json::json!({"ok": true})]).unwrap_err();
+        assert_eq!(err.kind(), io::ErrorKind::BrokenPipe);
     }
 }

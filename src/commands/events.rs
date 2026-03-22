@@ -3,10 +3,39 @@ use crate::dateparse;
 use crate::error::AppError;
 use crate::output::print_output;
 use crate::store::{CalendarStore, EventInfo};
-use chrono::{Duration, Local, NaiveDate};
+use chrono::{DateTime, Duration, Local, NaiveDate, Timelike};
 use unicode_width::UnicodeWidthStr;
 
 const TIME_W: usize = 15;
+pub const EVENT_FIELD_NAMES: &[&str] = &[
+    "id",
+    "title",
+    "start",
+    "end",
+    "calendar",
+    "calendar_id",
+    "location",
+    "url",
+    "notes",
+    "all_day",
+    "status",
+    "availability",
+    "organizer",
+    "created",
+    "modified",
+    "recurring",
+    "recurrence",
+    "recurrence_rule",
+    "alerts",
+];
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum EventDisplayState {
+    Past,
+    Now,
+    AllDay,
+    Upcoming,
+}
 
 pub fn run(
     store: &CalendarStore,
@@ -29,8 +58,7 @@ pub fn run(
     validate_date_range(from_date, to_date)?;
 
     let events = store.events(from_date, to_date, calendar.as_deref())?;
-    print_events(events, format, opts);
-    Ok(())
+    print_events(events, format, opts)
 }
 
 fn pad_right(s: &str, width: usize) -> String {
@@ -93,18 +121,42 @@ pub fn validate_date_range(from: NaiveDate, to: NaiveDate) -> Result<(), AppErro
     Ok(())
 }
 
-pub fn print_events(events: Vec<EventInfo>, format: OutputFormat, opts: &DisplayOpts) {
-    let mut events = events;
-
-    if let Some(after) = opts.after {
-        if let Some(t) = parse_hhmm(after) {
-            events.retain(|e| e.start.time() >= t || e.all_day);
-        }
+pub fn validate_field_list(fields: &str) -> Result<(), AppError> {
+    let field_list: Vec<&str> = fields.split(',').map(|field| field.trim()).collect();
+    if field_list.is_empty() || field_list.iter().any(|field| field.is_empty()) {
+        return Err(AppError::InvalidArgument(
+            "--fields must be a comma-separated list of field names".to_string(),
+        ));
     }
-    if let Some(before) = opts.before {
-        if let Some(t) = parse_hhmm(before) {
-            events.retain(|e| e.start.time() < t || e.all_day);
-        }
+
+    let invalid: Vec<&str> = field_list
+        .iter()
+        .copied()
+        .filter(|field| !EVENT_FIELD_NAMES.contains(field))
+        .collect();
+    if !invalid.is_empty() {
+        return Err(AppError::InvalidArgument(format!(
+            "Unknown field(s): {}. Available fields: {}",
+            invalid.join(", "),
+            EVENT_FIELD_NAMES.join(", ")
+        )));
+    }
+
+    Ok(())
+}
+
+pub fn print_events(
+    events: Vec<EventInfo>,
+    format: OutputFormat,
+    opts: &DisplayOpts,
+) -> Result<(), AppError> {
+    let mut events = events;
+    events = visible_events(events);
+
+    let after_time = opts.after.and_then(parse_hhmm);
+    let before_time = opts.before.and_then(parse_hhmm);
+    if after_time.is_some() || before_time.is_some() {
+        events.retain(|e| event_matches_time_filters(e, after_time, before_time));
     }
 
     if let Some(sort_key) = opts.sort {
@@ -126,14 +178,13 @@ pub fn print_events(events: Vec<EventInfo>, format: OutputFormat, opts: &Display
     if opts.fields.is_some() && !matches!(format, OutputFormat::Human) {
         let field_list: Vec<&str> = opts.fields.unwrap().split(',').map(|s| s.trim()).collect();
         let filtered = filter_fields(&events, &field_list);
-        print_output(format, &filtered, |_| {});
-        return;
+        return print_output(format, &filtered, |_, _| Ok(()));
     }
 
-    print_output(format, &events, |evts| {
+    print_output(format, &events, |evts, out| {
         if evts.is_empty() {
-            println!("No events found.");
-            return;
+            writeln!(out, "No events found.")?;
+            return Ok(());
         }
 
         let color = !opts.no_color;
@@ -175,23 +226,24 @@ pub fn print_events(events: Vec<EventInfo>, format: OutputFormat, opts: &Display
 
         if !opts.no_header {
             if verbose {
-                println!(
+                writeln!(
+                    out,
                     "{dim}  {:>3}  {:<date_w$}  {:<TIME_W$}  {:<title_w$}  {:<cal_w$}  {:<dur_w$}  {:<notes_w$}  ID{reset}",
                     "#", "DATE", "TIME", "TITLE", "CALENDAR", "DURATION", "NOTES",
-                );
+                )?;
             } else {
-                println!(
+                writeln!(
+                    out,
                     "{dim}  {:>3}  {:<date_w$}  {:<TIME_W$}  {:<title_w$}  {:<cal_w$}  DURATION{reset}",
                     "#", "DATE", "TIME", "TITLE", "CALENDAR",
-                );
+                )?;
             }
         }
 
         for ev in evts {
             let date_p = ev.start.format("%Y-%m-%d").to_string();
 
-            let is_past = ev.end < now;
-            let is_now = ev.start <= now && ev.end > now;
+            let display_state = event_display_state(ev, now);
             let duration = format_event_duration(ev);
             let title_p = pad_right(&ev.title, title_w);
             let cal_p = pad_right(&ev.calendar, cal_w);
@@ -230,27 +282,120 @@ pub fn print_events(events: Vec<EventInfo>, format: OutputFormat, opts: &Display
                 duration.clone()
             };
 
-            if is_past {
-                println!(
-                    "{dim}  {row:>3}  {date_p}  {time_p}  {title_p}  {cal_p}  {dur_p}{verbose_suffix}{reset}"
-                );
-            } else if is_now {
-                println!(
-                    "  {row:>3}  {date_p}  {green}{bold}{time_p}{reset}  {bold}{title_p}{reset}  {dim}{cal_p}{reset}  {dim}{dur_p}{verbose_suffix}{reset}"
-                );
-            } else if ev.all_day {
-                println!(
-                    "  {row:>3}  {date_p}  {cyan}{time_p}{reset}  {bold}{title_p}{reset}  {dim}{cal_p}{reset}  {dim}{dur_p}{verbose_suffix}{reset}"
-                );
-            } else {
-                println!(
-                    "  {row:>3}  {date_p}  {time_p}  {bold}{title_p}{reset}  {dim}{cal_p}{reset}  {dim}{dur_p}{verbose_suffix}{reset}"
-                );
+            match display_state {
+                EventDisplayState::Past => {
+                    writeln!(
+                        out,
+                        "{dim}  {row:>3}  {date_p}  {time_p}  {title_p}  {cal_p}  {dur_p}{verbose_suffix}{reset}"
+                    )?;
+                }
+                EventDisplayState::Now => {
+                    writeln!(
+                        out,
+                        "  {row:>3}  {date_p}  {green}{bold}{time_p}{reset}  {bold}{title_p}{reset}  {dim}{cal_p}{reset}  {dim}{dur_p}{verbose_suffix}{reset}"
+                    )?;
+                }
+                EventDisplayState::AllDay => {
+                    writeln!(
+                        out,
+                        "  {row:>3}  {date_p}  {cyan}{time_p}{reset}  {bold}{title_p}{reset}  {dim}{cal_p}{reset}  {dim}{dur_p}{verbose_suffix}{reset}"
+                    )?;
+                }
+                EventDisplayState::Upcoming => {
+                    writeln!(
+                        out,
+                        "  {row:>3}  {date_p}  {time_p}  {bold}{title_p}{reset}  {dim}{cal_p}{reset}  {dim}{dur_p}{verbose_suffix}{reset}"
+                    )?;
+                }
             }
 
             row += 1;
         }
-    });
+        Ok(())
+    })
+}
+
+fn visible_events(events: Vec<EventInfo>) -> Vec<EventInfo> {
+    events
+        .into_iter()
+        .filter(|event| event.status != "canceled")
+        .collect()
+}
+
+fn event_display_state(event: &EventInfo, now: DateTime<Local>) -> EventDisplayState {
+    if event.all_day {
+        EventDisplayState::AllDay
+    } else if event.end < now {
+        EventDisplayState::Past
+    } else if event.start <= now && event.end > now {
+        EventDisplayState::Now
+    } else {
+        EventDisplayState::Upcoming
+    }
+}
+
+fn event_matches_time_filters(
+    event: &EventInfo,
+    after: Option<chrono::NaiveTime>,
+    before: Option<chrono::NaiveTime>,
+) -> bool {
+    if event.all_day || event.end.date_naive() > event.start.date_naive() {
+        return multi_day_event_matches_time_filters(event, after, before);
+    }
+
+    after.is_none_or(|time| event.end.time() > time)
+        && before.is_none_or(|time| event.start.time() < time)
+}
+
+fn multi_day_event_matches_time_filters(
+    event: &EventInfo,
+    after: Option<chrono::NaiveTime>,
+    before: Option<chrono::NaiveTime>,
+) -> bool {
+    if event.all_day {
+        return true;
+    }
+
+    let filter_start = after.map(seconds_since_midnight).unwrap_or(0);
+    let filter_end = before.map(seconds_since_midnight).unwrap_or(24 * 60 * 60);
+
+    if filter_start >= filter_end {
+        return false;
+    }
+
+    if time_segment_overlaps(
+        seconds_since_midnight(event.start.time()),
+        24 * 60 * 60,
+        filter_start,
+        filter_end,
+    ) {
+        return true;
+    }
+
+    let day_span = (event.end.date_naive() - event.start.date_naive()).num_days();
+    if day_span > 1 {
+        return true;
+    }
+
+    time_segment_overlaps(
+        0,
+        seconds_since_midnight(event.end.time()),
+        filter_start,
+        filter_end,
+    )
+}
+
+fn time_segment_overlaps(
+    segment_start: u32,
+    segment_end: u32,
+    filter_start: u32,
+    filter_end: u32,
+) -> bool {
+    segment_start < filter_end && segment_end > filter_start
+}
+
+fn seconds_since_midnight(time: chrono::NaiveTime) -> u32 {
+    time.num_seconds_from_midnight()
 }
 
 fn parse_hhmm(s: &str) -> Option<chrono::NaiveTime> {
@@ -305,7 +450,7 @@ fn format_event_duration(event: &EventInfo) -> String {
 mod tests {
     use super::*;
     use crate::store::EventInfo;
-    use chrono::{Local, TimeZone};
+    use chrono::{Local, NaiveDate, NaiveTime, TimeZone};
 
     fn make_event(title: &str, calendar: &str, notes: Option<&str>) -> EventInfo {
         let start = Local.with_ymd_and_hms(2026, 3, 20, 14, 0, 0).unwrap();
@@ -316,6 +461,7 @@ mod tests {
             start,
             end,
             calendar: calendar.to_string(),
+            calendar_id: "cal-1".to_string(),
             location: None,
             url: None,
             notes: notes.map(|s| s.to_string()),
@@ -327,7 +473,23 @@ mod tests {
             modified: None,
             recurring: false,
             recurrence: None,
+            recurrence_rule: None,
+            alerts: Vec::new(),
         }
+    }
+
+    fn local_dt(
+        year: i32,
+        month: u32,
+        day: u32,
+        hour: u32,
+        minute: u32,
+    ) -> chrono::DateTime<Local> {
+        let naive = NaiveDate::from_ymd_opt(year, month, day)
+            .unwrap()
+            .and_hms_opt(hour, minute, 0)
+            .unwrap();
+        Local.from_local_datetime(&naive).earliest().unwrap()
     }
 
     #[test]
@@ -387,6 +549,21 @@ mod tests {
     }
 
     #[test]
+    fn test_validate_field_list_rejects_unknown_field() {
+        let err = validate_field_list("title,titel").unwrap_err();
+        assert!(err.to_string().contains("Unknown field(s): titel"));
+    }
+
+    #[test]
+    fn test_validate_field_list_rejects_empty_field_name() {
+        let err = validate_field_list("title,,start").unwrap_err();
+        assert!(
+            err.to_string()
+                .contains("--fields must be a comma-separated list of field names")
+        );
+    }
+
+    #[test]
     fn test_pad_right_ascii() {
         assert_eq!(pad_right("abc", 6), "abc   ");
         assert_eq!(pad_right("abc", 3), "abc");
@@ -397,5 +574,89 @@ mod tests {
     fn test_pad_right_cjk() {
         assert_eq!(pad_right("会議", 6), "会議  ");
         assert_eq!(pad_right("会議", 4), "会議");
+    }
+
+    #[test]
+    fn test_visible_events_filters_canceled() {
+        let mut canceled = make_event("Canceled", "Work", None);
+        canceled.status = "canceled".to_string();
+        let visible = make_event("Visible", "Work", None);
+
+        let events = visible_events(vec![canceled, visible.clone()]);
+        assert_eq!(events.len(), 1);
+        assert_eq!(events[0].title, visible.title);
+    }
+
+    #[test]
+    fn test_event_display_state_prefers_all_day_over_now() {
+        let now = local_dt(2026, 3, 20, 12, 0);
+        let mut event = make_event("Holiday", "Work", None);
+        event.all_day = true;
+        event.start = local_dt(2026, 3, 20, 0, 0);
+        event.end = local_dt(2026, 3, 21, 0, 0);
+
+        assert_eq!(event_display_state(&event, now), EventDisplayState::AllDay);
+    }
+
+    #[test]
+    fn test_event_matches_time_filters_uses_overlap_after() {
+        let mut event = make_event("Overlap", "Work", None);
+        event.start = local_dt(2026, 3, 20, 8, 30);
+        event.end = local_dt(2026, 3, 20, 10, 0);
+
+        assert!(event_matches_time_filters(
+            &event,
+            Some(NaiveTime::from_hms_opt(9, 0, 0).unwrap()),
+            None
+        ));
+    }
+
+    #[test]
+    fn test_event_matches_time_filters_uses_overlap_before() {
+        let mut event = make_event("Overlap", "Work", None);
+        event.start = local_dt(2026, 3, 20, 16, 30);
+        event.end = local_dt(2026, 3, 20, 18, 30);
+
+        assert!(event_matches_time_filters(
+            &event,
+            None,
+            Some(NaiveTime::from_hms_opt(17, 0, 0).unwrap())
+        ));
+    }
+
+    #[test]
+    fn test_event_matches_time_filters_excludes_non_overlapping_event() {
+        let mut event = make_event("Late", "Work", None);
+        event.start = local_dt(2026, 3, 20, 18, 0);
+        event.end = local_dt(2026, 3, 20, 19, 0);
+
+        assert!(!event_matches_time_filters(
+            &event,
+            Some(NaiveTime::from_hms_opt(9, 0, 0).unwrap()),
+            Some(NaiveTime::from_hms_opt(17, 0, 0).unwrap())
+        ));
+    }
+
+    #[test]
+    fn test_event_matches_time_filters_handles_cross_midnight_overlap() {
+        let mut event = make_event("Overnight", "Work", None);
+        event.start = local_dt(2026, 3, 20, 23, 30);
+        event.end = local_dt(2026, 3, 21, 0, 15);
+
+        assert!(event_matches_time_filters(
+            &event,
+            None,
+            Some(NaiveTime::from_hms_opt(9, 0, 0).unwrap())
+        ));
+        assert!(event_matches_time_filters(
+            &event,
+            Some(NaiveTime::from_hms_opt(22, 0, 0).unwrap()),
+            None
+        ));
+        assert!(!event_matches_time_filters(
+            &event,
+            Some(NaiveTime::from_hms_opt(1, 0, 0).unwrap()),
+            Some(NaiveTime::from_hms_opt(22, 0, 0).unwrap())
+        ));
     }
 }

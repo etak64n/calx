@@ -51,8 +51,7 @@ pub fn run(
     let (from_date, to_date) = resolve_search_range(from.as_deref(), to.as_deref())?;
 
     let events = store.search_events(query, exact, from_date, to_date, calendar.as_deref())?;
-    super::events::print_events(events, format, opts);
-    Ok(())
+    super::events::print_events(events, format, opts)
 }
 
 #[cfg(test)]
